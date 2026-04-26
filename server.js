@@ -4,9 +4,10 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET)
 
 const app = express()
 
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
-  const sig = req.headers['stripe-signature']
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  console.log("🔥 Webhook HIT")
 
+  const sig = req.headers['stripe-signature']
   let event
 
   try {
@@ -16,36 +17,52 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET
     )
   } catch (err) {
-    console.log('Webhook error:', err.message)
+    console.log('❌ Webhook error:', err.message)
     return res.sendStatus(400)
   }
 
+  console.log("✅ Event type:", event.type)
+
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object
-    const userId = session.metadata.user_id
+    const userId = session.metadata?.user_id
     const amount = session.amount_total / 100
 
-    console.log("User paid:", userId)
+    console.log("💰 User paid:", userId)
 
-    // ✅ 1. SEND ACCESS TO USER (AUTO)
-    global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-      member_limit: 1
-    }).then(link => {
-      global.bot.telegram.sendMessage(
+    if (!userId) {
+      console.log("❌ No user_id in metadata")
+      return res.sendStatus(200)
+    }
+
+    try {
+      // ✅ CREATE INVITE LINK
+      console.log("🔗 Creating invite link...")
+      const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+        member_limit: 1
+      })
+
+      console.log("✅ Invite link created")
+
+      // ✅ SEND TO USER
+      await global.bot.telegram.sendMessage(
         userId,
         `✅ Payment received!\nJoin here:\n${link.invite_link}`
       )
-    }).catch(err => {
-      console.log("Invite link error:", err.message)
-    })
 
-    // ✅ 2. SEND NOTIFICATION TO YOU (ADMIN)
-    global.bot.telegram.sendMessage(
-      process.env.ADMIN_ID,
-      `💰 New Payment!\n\nUser ID: ${userId}\nAmount: $${amount}`
-    ).catch(err => {
-      console.log("Admin notify error:", err.message)
-    })
+      console.log("📩 Message sent to user")
+
+      // ✅ NOTIFY ADMIN
+      await global.bot.telegram.sendMessage(
+        process.env.ADMIN_ID,
+        `💰 New Payment!\n\nUser ID: ${userId}\nAmount: $${amount}`
+      )
+
+      console.log("📩 Admin notified")
+
+    } catch (err) {
+      console.log("❌ Telegram error:", err.message)
+    }
   }
 
   res.sendStatus(200)

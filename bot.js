@@ -26,7 +26,7 @@ bot.start(async (ctx) => {
   }
 
   return ctx.reply(
-    `Hi, ${name}!\n\nPlease select the option below to proceed with your purchase:`,
+    `Hi, ${name} 👋\n\nPlease select the option below to proceed with your purchase:`,
     Markup.inlineKeyboard([
       [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
     ])
@@ -132,7 +132,13 @@ bot.action('paypal', async (ctx) => {
       })
     })
 
+    if (!orderRes.ok) {
+      console.log("PayPal order error")
+      return ctx.editMessageText("❌ Failed to create PayPal payment.")
+    }
+
     const orderData = await orderRes.json()
+
     const approveLink = orderData.links.find(l => l.rel === "approve").href
 
     return ctx.editMessageText(

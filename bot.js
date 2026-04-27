@@ -114,7 +114,7 @@ bot.action('paypal', async (ctx) => {
           custom_id: String(userId) // 🔥 IMPORTANT
         }],
         application_context: {
-          return_url: `https://telegram-bot-production-a216.up.railway.app/success?user_id=${userId}`,
+          return_url: `${process.env.BASE_URL}/success?user_id=${userId}`,
           cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
         }
       })

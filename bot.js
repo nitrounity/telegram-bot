@@ -51,6 +51,9 @@ bot.action('buy', (ctx) => {
 // 🔹 STRIPE
 bot.action('stripe', async (ctx) => {
   try {
+    // ⏳ Loading message
+    await ctx.editMessageText("⏳ Generating Stripe payment...")
+
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       line_items: [{
@@ -68,6 +71,21 @@ bot.action('stripe', async (ctx) => {
       }
     })
 
+    return ctx.editMessageText(
+      `💳 Pay with Stripe:\n${session.url}`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('💳 Stripe', 'stripe')],
+        [Markup.button.callback('💰 PayPal', 'paypal')],
+        [Markup.button.callback('Crypto', 'crypto')],
+        [Markup.button.callback('⬅️ Back', 'back_main')],
+      ])
+    )
+
+  } catch (err) {
+    console.log(err.message)
+    return ctx.editMessageText("❌ Stripe error. Try again.")
+  }
+})
     return ctx.editMessageText(
   `💳 Pay with Stripe:\n${session.url}`,
   Markup.inlineKeyboard([
@@ -89,6 +107,9 @@ bot.action('stripe', async (ctx) => {
 bot.action('paypal', async (ctx) => {
   try {
     const userId = ctx.from.id
+
+    // ⏳ Loading
+    await ctx.editMessageText("⏳ Generating PayPal payment...")
 
     const auth = Buffer.from(
       process.env.PAYPAL_CLIENT_ID + ":" + process.env.PAYPAL_SECRET
@@ -119,7 +140,7 @@ bot.action('paypal', async (ctx) => {
             currency_code: "USD",
             value: "39.99"
           },
-          custom_id: String(userId) // 🔥 IMPORTANT
+          custom_id: String(userId)
         }],
         application_context: {
           return_url: `${process.env.BASE_URL}/success?user_id=${userId}`,
@@ -132,46 +153,20 @@ bot.action('paypal', async (ctx) => {
     const approveLink = orderData.links.find(l => l.rel === "approve").href
 
     return ctx.editMessageText(
-  `💳 Pay with PayPal:\n${approveLink}`,
-  Markup.inlineKeyboard([
-    [Markup.button.callback('💳 Stripe', 'stripe')],
-    [Markup.button.callback('💰 PayPal', 'paypal')],
-    [Markup.button.callback('Crypto', 'crypto')],
-    [Markup.button.callback('⬅️ Back', 'back_main')],
-  ])
-)
+      `💰 Pay with PayPal:\n${approveLink}`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('💳 Stripe', 'stripe')],
+        [Markup.button.callback('💰 PayPal', 'paypal')],
+        [Markup.button.callback('Crypto', 'crypto')],
+        [Markup.button.callback('⬅️ Back', 'back_main')],
+      ])
+    )
 
   } catch (err) {
     console.log(err.message)
-    return ctx.reply("❌ PayPal error.")
+    return ctx.editMessageText("❌ PayPal error. Try again.")
   }
 })
-
-
-// 🔹 CRYPTO (placeholder)
-bot.action('crypto', (ctx) => {
-  return ctx.editMessageText(
-  "Crypto coming soon.",
-  Markup.inlineKeyboard([
-    [Markup.button.callback('💳 Stripe', 'stripe')],
-    [Markup.button.callback('💰 PayPal', 'paypal')],
-    [Markup.button.callback('Crypto', 'crypto')],
-    [Markup.button.callback('⬅️ Back', 'back_main')],
-  ])
-)
-})
-
-
-// 🔹 BACK
-bot.action('back_main', (ctx) => {
-  return ctx.editMessageText(
-    `Hi, ${ctx.from.first_name}!\n\nPlease select the option below to proceed with your purchase:`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
-    ])
-  )
-})
-
 
 // 🚀 START
 bot.launch()

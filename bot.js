@@ -77,12 +77,12 @@ bot.action('stripe', async (ctx) => {
 })
 
 
-// 🔹 PAYPAL
+// 🔹 PAYPAL (WEBHOOK-READY)
 bot.action('paypal', async (ctx) => {
   try {
     const userId = ctx.from.id
 
-    // 🔑 Get PayPal token
+    // 🔑 Get PayPal access token
     const auth = Buffer.from(
       process.env.PAYPAL_CLIENT_ID + ":" + process.env.PAYPAL_SECRET
     ).toString("base64")
@@ -99,7 +99,7 @@ bot.action('paypal', async (ctx) => {
     const tokenData = await tokenRes.json()
     const accessToken = tokenData.access_token
 
-    // 💰 Create order
+    // 💰 Create PayPal order
     const orderRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders`, {
       method: "POST",
       headers: {
@@ -112,7 +112,8 @@ bot.action('paypal', async (ctx) => {
           amount: {
             currency_code: "USD",
             value: "39.99"
-          }
+          },
+          custom_id: String(userId) // 🔥 REQUIRED FOR WEBHOOK
         }],
         application_context: {
           return_url: `https://telegram-bot-production-a216.up.railway.app/success?user_id=${userId}`,

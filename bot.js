@@ -68,7 +68,15 @@ bot.action('stripe', async (ctx) => {
       }
     })
 
-    return ctx.reply(`💳 Pay here:\n${session.url}`)
+    return ctx.editMessageText(
+  `💳 Pay with Stripe:\n${session.url}`,
+  Markup.inlineKeyboard([
+    [Markup.button.callback('💳 Stripe', 'stripe')],
+    [Markup.button.callback('💰 PayPal', 'paypal')],
+    [Markup.button.callback('Crypto', 'crypto')],
+    [Markup.button.callback('⬅️ Back', 'back_main')],
+  ])
+)
 
   } catch (err) {
     console.log(err.message)
@@ -123,7 +131,15 @@ bot.action('paypal', async (ctx) => {
     const orderData = await orderRes.json()
     const approveLink = orderData.links.find(l => l.rel === "approve").href
 
-    return ctx.reply(`💰 Pay with PayPal:\n${approveLink}`)
+    return ctx.editMessageText(
+  `💳 Pay with PayPal:\n${approveLink}`,
+  Markup.inlineKeyboard([
+    [Markup.button.callback('💳 Stripe', 'stripe')],
+    [Markup.button.callback('💰 PayPal', 'paypal')],
+    [Markup.button.callback('Crypto', 'crypto')],
+    [Markup.button.callback('⬅️ Back', 'back_main')],
+  ])
+)
 
   } catch (err) {
     console.log(err.message)
@@ -134,7 +150,15 @@ bot.action('paypal', async (ctx) => {
 
 // 🔹 CRYPTO (placeholder)
 bot.action('crypto', (ctx) => {
-  return ctx.reply("Crypto coming soon.")
+  return ctx.editMessageText(
+  "Crypto coming soon.",
+  Markup.inlineKeyboard([
+    [Markup.button.callback('💳 Stripe', 'stripe')],
+    [Markup.button.callback('💰 PayPal', 'paypal')],
+    [Markup.button.callback('Crypto', 'crypto')],
+    [Markup.button.callback('⬅️ Back', 'back_main')],
+  ])
+)
 })
 
 

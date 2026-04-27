@@ -40,7 +40,7 @@ bot.action('buy', (ctx) => {
     'Please select a payment method:',
     Markup.inlineKeyboard([
       [Markup.button.callback('💳 Credit/Debit Card (Stripe)', 'stripe')],
-      [Markup.button.callback('PayPal', 'paypal')],
+      [Markup.button.callback('💰 PayPal', 'paypal')],
       [Markup.button.callback('Crypto (No KYC)', 'crypto')],
       [Markup.button.callback('⬅️ Back', 'back_main')],
     ])
@@ -51,7 +51,6 @@ bot.action('buy', (ctx) => {
 // 🔹 STRIPE
 bot.action('stripe', async (ctx) => {
   try {
-    // ⏳ Loading message
     await ctx.editMessageText("⏳ Generating Stripe payment...")
 
     const session = await stripe.checkout.sessions.create({
@@ -86,29 +85,13 @@ bot.action('stripe', async (ctx) => {
     return ctx.editMessageText("❌ Stripe error. Try again.")
   }
 })
-    return ctx.editMessageText(
-  `💳 Pay with Stripe:\n${session.url}`,
-  Markup.inlineKeyboard([
-    [Markup.button.callback('💳 Stripe', 'stripe')],
-    [Markup.button.callback('💰 PayPal', 'paypal')],
-    [Markup.button.callback('Crypto', 'crypto')],
-    [Markup.button.callback('⬅️ Back', 'back_main')],
-  ])
-)
-
-  } catch (err) {
-    console.log(err.message)
-    return ctx.reply("❌ Stripe error.")
-  }
-})
 
 
-// 🔹 PAYPAL (WEBHOOK READY)
+// 🔹 PAYPAL
 bot.action('paypal', async (ctx) => {
   try {
     const userId = ctx.from.id
 
-    // ⏳ Loading
     await ctx.editMessageText("⏳ Generating PayPal payment...")
 
     const auth = Buffer.from(
@@ -167,6 +150,32 @@ bot.action('paypal', async (ctx) => {
     return ctx.editMessageText("❌ PayPal error. Try again.")
   }
 })
+
+
+// 🔹 CRYPTO
+bot.action('crypto', (ctx) => {
+  return ctx.editMessageText(
+    "Crypto coming soon.",
+    Markup.inlineKeyboard([
+      [Markup.button.callback('💳 Stripe', 'stripe')],
+      [Markup.button.callback('💰 PayPal', 'paypal')],
+      [Markup.button.callback('Crypto', 'crypto')],
+      [Markup.button.callback('⬅️ Back', 'back_main')],
+    ])
+  )
+})
+
+
+// 🔹 BACK
+bot.action('back_main', (ctx) => {
+  return ctx.editMessageText(
+    `Please select the option below to proceed with your purchase:`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
+    ])
+  )
+})
+
 
 // 🚀 START
 bot.launch()

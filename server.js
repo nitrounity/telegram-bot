@@ -2,26 +2,11 @@ require('dotenv').config()
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 
-// ✅ Validate required environment variables at startup
-if (!process.env.GROUP_ID) {
-  console.error('❌ Missing required environment variable: GROUP_ID')
-  process.exit(1)
-}
-
 const app = express()
 
-// 🔒 Shutdown flag — set to true when SIGTERM is received
-let isShuttingDown = false
-exports.setShuttingDown = () => { isShuttingDown = true }
-
+// 🔹 STRIPE WEBHOOK
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  // 🛑 Reject new requests during graceful shutdown
-  if (isShuttingDown) {
-    console.log('⚠️ Rejecting webhook request — server is shutting down')
-    return res.status(503).json({ error: 'Service unavailable — shutting down' })
-  }
-
-  console.log("🔥 Webhook HIT")
+  console.log("🔥 Stripe Webhook HIT")
 
   const sig = req.headers['stripe-signature']
   let event
@@ -33,64 +18,113 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       process.env.STRIPE_WEBHOOK_SECRET
     )
   } catch (err) {
-    console.log('❌ Webhook error:', err.message)
+    console.log("❌ Stripe webhook error:", err.message)
     return res.sendStatus(400)
   }
 
-  console.log("✅ Event type:", event.type)
+  console.log("✅ Event:", event.type)
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object
     const userId = session.metadata?.user_id
     const amount = session.amount_total / 100
 
-    console.log("💰 User paid:", userId)
-
     if (!userId) {
-      console.log("❌ No user_id in metadata")
+      console.log("❌ Missing user_id")
       return res.sendStatus(200)
     }
 
-    // ✅ CREATE INVITE LINK
-    let link
     try {
-      console.log("🔗 Creating invite link...")
-      link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      // 🔗 Create invite
+      const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
         member_limit: 1
       })
-      console.log("✅ Invite link created")
-    } catch (err) {
-      console.error("❌ Failed to create invite link:", err.message)
-      return res.sendStatus(500)
-    }
 
-    // ✅ SEND TO USER AND NOTIFY ADMIN
-    try {
+      // 📩 Send to user
       await global.bot.telegram.sendMessage(
         userId,
         `✅ Payment received!\nJoin here:\n${link.invite_link}`
       )
-      console.log("📩 Message sent to user")
 
+      // 📩 Notify admin
       await global.bot.telegram.sendMessage(
         process.env.ADMIN_ID,
-        `💰 New Payment!\n\nUser ID: ${userId}\nAmount: $${amount}`
+        `💰 Stripe Payment\nUser: ${userId}\nAmount: $${amount}`
       )
-      console.log("📩 Admin notified")
+
+      console.log("✅ Stripe flow complete")
+
     } catch (err) {
-      console.error("❌ Failed to send Telegram messages:", err.message)
-      return res.sendStatus(500)
+      console.log("❌ Telegram error:", err.message)
     }
   }
 
   res.sendStatus(200)
 })
 
-const server = app.listen(3000, () => console.log("Webhook server running"))
 
-server.on('error', (err) => {
-  console.error('❌ Failed to start webhook server:', err.message)
-  process.exit(1)
+// 🔹 PAYPAL SUCCESS (redirect-based)
+app.get('/success', async (req, res) => {
+  const { token, user_id } = req.query
+
+  console.log("🟡 PayPal success route hit")
+
+  try {
+    // 🔑 Get PayPal token
+    const auth = Buffer.from(
+      process.env.PAYPAL_CLIENT_ID + ":" + process.env.PAYPAL_SECRET
+    ).toString("base64")
+
+    const tokenRes = await fetch(`${process.env.PAYPAL_BASE}/v1/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: "grant_type=client_credentials"
+    })
+
+    const tokenData = await tokenRes.json()
+    const accessToken = tokenData.access_token
+
+    // 💰 Capture payment
+    await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders/${token}/capture`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      }
+    })
+
+    // 🔗 Create invite
+    const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
+
+    // 📩 Send to user
+    await global.bot.telegram.sendMessage(
+      user_id,
+      `✅ PayPal payment received!\nJoin here:\n${link.invite_link}`
+    )
+
+    // 📩 Notify admin
+    await global.bot.telegram.sendMessage(
+      process.env.ADMIN_ID,
+      `💰 PayPal Payment\nUser: ${user_id}`
+    )
+
+    res.send("Payment successful! Return to Telegram.")
+
+    console.log("✅ PayPal flow complete")
+
+  } catch (err) {
+    console.log("❌ PayPal error:", err.message)
+    res.send("Error processing payment.")
+  }
 })
 
-exports.server = server
+
+// 🔹 START SERVER
+app.listen(3000, () => {
+  console.log("🚀 Server running on port 3000")
+})

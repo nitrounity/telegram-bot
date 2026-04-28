@@ -89,13 +89,13 @@ bot.start(async (ctx) => {
   }
 
   return ctx.reply(
-  `Hi, ${name} 👋\n\n` +
-  `💬 Chat here for Customer Support\n\n` +
-  `Please select the option below to proceed with your purchase:`,
-  Markup.inlineKeyboard([
-    [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
-  ])
-)
+    `Hi, ${name} 👋\n\n` +
+    `💬 Chat here for Customer Support\n\n` +
+    `Please select the option below to proceed with your purchase:`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
+    ])
+  )
 })
 
 // 🔹 PAYMENT MENU
@@ -110,7 +110,6 @@ bot.action('buy', (ctx) => {
     ])
   )
 })
-
 
 // 🔹 STRIPE
 bot.action('stripe', async (ctx) => {
@@ -151,8 +150,7 @@ bot.action('stripe', async (ctx) => {
   }
 })
 
-
-// 🔹 PAYPAL (placeholder)
+// 🔹 PAYPAL
 bot.action('paypal', async (ctx) => {
   return ctx.editMessageText(
     "💰 PayPal payment coming soon.",
@@ -164,7 +162,6 @@ bot.action('paypal', async (ctx) => {
     ])
   )
 })
-
 
 // 🔹 CRYPTO
 bot.action('crypto', (ctx) => {
@@ -179,7 +176,6 @@ bot.action('crypto', (ctx) => {
   )
 })
 
-
 // 🔹 BACK
 bot.action('back_main', (ctx) => {
   return ctx.editMessageText(
@@ -189,7 +185,6 @@ bot.action('back_main', (ctx) => {
     ])
   )
 })
-
 
 // 🔹 SUPPORT REPLY BUTTON
 bot.action(/reply_(.+)/, async (ctx) => {
@@ -214,14 +209,12 @@ bot.action(/reply_(.+)/, async (ctx) => {
   )
 })
 
-
 // 🔹 CANCEL REPLY
 bot.action('cancel_reply', async (ctx) => {
   replyMode.delete(ctx.from.id)
   await ctx.answerCbQuery()
   await ctx.reply("❌ Reply cancelled.")
 })
-
 
 // 🔹 ACCESS
 bot.command('access', async (ctx) => {
@@ -232,15 +225,12 @@ bot.command('access', async (ctx) => {
   ctx.reply(`🔑 ${link.invite_link}`)
 })
 
-
 // 🔹 STATS
 bot.command('stats', async (ctx) => {
   if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) return
-
   const { data } = await supabase.from('payments').select('*')
   ctx.reply(`📊 Users: ${data.length}`)
 })
-
 
 // 🔹 TEST MODE
 bot.command('test', (ctx) => {
@@ -253,8 +243,7 @@ bot.command('stoptest', (ctx) => {
   ctx.reply("🛑 Test OFF")
 })
 
-
-// 🔹 SUPPORT SYSTEM
+// 🔹 SUPPORT SYSTEM (FIXED)
 bot.on('message', async (ctx) => {
   if (!ctx.message.text) return
 
@@ -287,21 +276,26 @@ bot.on('message', async (ctx) => {
     return
   }
 
-  // USER → ADMIN
-  await bot.telegram.sendMessage(
-    process.env.ADMIN_ID,
-    `📩 *New Support Message*\n\nFrom @${username} [Open](tg://user?id=${userId})\nID: \`${userId}\`\n—\n${text}`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "💬 Reply", callback_data: `reply_${userId}` }]
-        ]
+  // USER → ADMIN (SAFE VERSION)
+  try {
+    await bot.telegram.sendMessage(
+      process.env.ADMIN_ID,
+      `📩 New Support Message\n\nFrom @${username}\nID: ${userId}\n—\n${text}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "💬 Reply", callback_data: `reply_${userId}` }]
+          ]
+        }
       }
-    }
-  )
+    )
 
-  await ctx.reply("✅ Message sent to support. We'll reply shortly.")
+    await ctx.reply("✅ Message sent to support. We'll reply shortly.")
+
+  } catch (err) {
+    console.log("❌ Support error:", err.message)
+    await ctx.reply("❌ Failed to contact support. Please try again.")
+  }
 })
 
 // 🚀 START

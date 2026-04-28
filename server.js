@@ -79,7 +79,9 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       await global.bot.telegram.sendMessage(
         userId,
-        `✅ Payment received!\nJoin here:\n${link.invite_link}`
+        `✅ Payment received!\n\n` +
+        `🔑 Join here:\n${link.invite_link}\n\n` +
+        `💡 You can use /access anytime to get your link again.`
       )
 
       await global.bot.telegram.sendMessage(
@@ -132,7 +134,9 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
       await global.bot.telegram.sendMessage(
         userId,
-        `✅ Payment received!\nJoin here:\n${link.invite_link}`
+        `✅ Payment received!\n\n` +
+        `🔑 Join here:\n${link.invite_link}\n\n` +
+        `💡 You can use /access anytime to get your link again.`
       )
 
       await global.bot.telegram.sendMessage(
@@ -149,7 +153,7 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 })
 
 
-// 🔹 PAYPAL FALLBACK (backup if webhook fails)
+// 🔹 PAYPAL FALLBACK (backup)
 app.get('/success', async (req, res) => {
   const { token, user_id } = req.query
 
@@ -185,7 +189,9 @@ app.get('/success', async (req, res) => {
 
     await global.bot.telegram.sendMessage(
       user_id,
-      `✅ PayPal payment received!\nJoin here:\n${link.invite_link}`
+      `✅ PayPal payment received!\n\n` +
+      `🔑 Join here:\n${link.invite_link}\n\n` +
+      `💡 You can use /access anytime to get your link again.`
     )
 
     await global.bot.telegram.sendMessage(

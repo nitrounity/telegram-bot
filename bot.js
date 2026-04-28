@@ -13,7 +13,6 @@ const bot = new Telegraf(process.env.BOT_TOKEN)
 global.bot = bot
 
 const seenUsers = new Set()
-
 const testUsers = new Set()
 
 // 🔒 Loading keyboard
@@ -23,8 +22,8 @@ const loadingKeyboard = Markup.inlineKeyboard([
 
 bot.action('noop', (ctx) => ctx.answerCbQuery())
 
+// 🔹 CHECK IF USER PAID
 async function hasPaid(userId) {
-  // 🔥 TEST MODE OVERRIDE
   if (String(userId) === String(process.env.ADMIN_ID) && testUsers.has(userId)) {
     return true
   }
@@ -43,6 +42,7 @@ async function hasPaid(userId) {
   return data && data.length > 0
 }
 
+// 🔹 CHECK IF USER IN GROUP
 async function isUserInGroup(userId) {
   try {
     const member = await bot.telegram.getChatMember(process.env.GROUP_ID, userId)
@@ -52,10 +52,11 @@ async function isUserInGroup(userId) {
       member.status === 'administrator' ||
       member.status === 'creator'
     )
-  } catch (err) {
+  } catch {
     return false
   }
 }
+
 
 // 🔹 START
 bot.start(async (ctx) => {
@@ -63,7 +64,6 @@ bot.start(async (ctx) => {
   const username = ctx.from.username || "no_username"
   const name = ctx.from.first_name || "no_name"
 
-  // 🚀 Notify admin (first time only)
   if (!seenUsers.has(userId)) {
     seenUsers.add(userId)
 
@@ -75,38 +75,35 @@ bot.start(async (ctx) => {
     } catch {}
   }
 
-  // 🔥 CHECK IF USER ALREADY PAID
-  
-const paid = await hasPaid(userId)
+  const paid = await hasPaid(userId)
 
-if (paid) {
-  const inGroup =
-    testUsers.has(userId) ? false : await isUserInGroup(userId)
+  if (paid) {
+    const inGroup =
+      testUsers.has(userId) ? false : await isUserInGroup(userId)
 
-  if (inGroup) {
-    return ctx.reply(
-      `✅ You already have access to the group.\n\n` +
-      `💡 Use /access anytime if you need a new invite link.`
-    )
+    if (inGroup) {
+      return ctx.reply(
+        `✅ You already have access to the group.\n\n` +
+        `💡 Use /access anytime if you need a new invite link.`
+      )
+    }
+
+    try {
+      const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+        member_limit: 1
+      })
+
+      return ctx.reply(
+        `✅ You already have access!\n\n` +
+        `🔑 Join here:\n${link.invite_link}\n\n` +
+        `💡 Use /access anytime if you need a new invite link.`
+      )
+    } catch (err) {
+      console.log(err.message)
+      return ctx.reply("Error generating access link.")
+    }
   }
 
-  try {
-    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-      member_limit: 1
-    })
-
-    return ctx.reply(
-      `✅ You already have access!\n\n` +
-      `🔑 Join here:\n${link.invite_link}\n\n` +
-      `💡 Use /access anytime if you need a new invite link.`
-    )
-  } catch (err) {
-    console.log(err.message)
-    return ctx.reply("Error generating access link.")
-  }
-}
-
-  // ❌ NOT PAID → SHOW PAYMENT
   return ctx.reply(
     `Hi, ${name} 👋\n\nPlease select the option below to proceed with your purchase:`,
     Markup.inlineKeyboard([
@@ -114,6 +111,7 @@ if (paid) {
     ])
   )
 })
+
 
 // 🔹 PAYMENT MENU
 bot.action('buy', (ctx) => {
@@ -147,9 +145,10 @@ bot.action('stripe', async (ctx) => {
       success_url: `https://t.me/${process.env.BOT_USERNAME}`,
       cancel_url: `https://t.me/${process.env.BOT_USERNAME}`,
       metadata: {
-  user_id: ctx.from.id,
-  username: ctx.from.username || "no_username"
-})
+        user_id: ctx.from.id,
+        username: ctx.from.username || "no_username"
+      }
+    })
 
     return ctx.editMessageText(
       `💳 Pay with Stripe:\n${session.url}`,
@@ -262,53 +261,6 @@ bot.action('back_main', (ctx) => {
 })
 
 
-// 🔹 ADMIN STATS (SUPABASE)
-bot.command('stats', async (ctx) => {
-  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
-    return ctx.reply("❌ Not authorized.")
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from('payments')
-      .select('*')
-
-    if (error) {
-      console.log(error)
-      return ctx.reply("❌ Failed to fetch stats.")
-    }
-
-    if (!data || data.length === 0) {
-      return ctx.reply("No payments yet.")
-    }
-
-    const totalRevenue = data.reduce((sum, p) => sum + Number(p.amount || 0), 0)
-    const totalUsers = new Set(data.map(p => p.user_id)).size
-
-    const stripeCount = data.filter(p => p.method === 'stripe').length
-    const paypalCount = data.filter(p => p.method === 'paypal').length
-
-    const recent = data
-      .slice(-5)
-      .reverse()
-      .map(p => `$${p.amount} (${p.method})`)
-      .join('\n')
-
-    await ctx.reply(
-      `📊 Stats:\n\n` +
-      `💰 Revenue: $${totalRevenue}\n` +
-      `👥 Users: ${totalUsers}\n\n` +
-      `💳 Stripe: ${stripeCount}\n` +
-      `💰 PayPal: ${paypalCount}\n\n` +
-      `🕒 Recent:\n${recent}`
-    )
-
-  } catch (err) {
-    console.log(err)
-    ctx.reply("❌ Error loading stats.")
-  }
-})
-
 // 🔹 ACCESS COMMAND
 bot.command('access', async (ctx) => {
   const userId = ctx.from.id
@@ -320,10 +272,13 @@ bot.command('access', async (ctx) => {
   }
 
   const inGroup =
-  testUsers.has(userId) ? false : await isUserInGroup(userId)
+    testUsers.has(userId) ? false : await isUserInGroup(userId)
 
   if (inGroup) {
-    return ctx.reply("✅ You already have access to the group.")
+    return ctx.reply(
+      `✅ You already have access to the group.\n\n` +
+      `💡 Use /access anytime if you need a new invite link.`
+    )
   }
 
   try {
@@ -338,14 +293,38 @@ bot.command('access', async (ctx) => {
   }
 })
 
+
+// 🔹 ADMIN STATS
+bot.command('stats', async (ctx) => {
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
+    return ctx.reply("❌ Not authorized.")
+  }
+
+  const { data } = await supabase.from('payments').select('*')
+
+  if (!data || data.length === 0) {
+    return ctx.reply("No payments yet.")
+  }
+
+  const totalRevenue = data.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+  const totalUsers = new Set(data.map(p => p.user_id)).size
+
+  await ctx.reply(
+    `📊 Stats:\n\n` +
+    `💰 Revenue: $${totalRevenue}\n` +
+    `👥 Users: ${totalUsers}`
+  )
+})
+
+
+// 🔹 TEST MODE
 bot.command('test', async (ctx) => {
   if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
     return ctx.reply("❌ Not authorized.")
   }
 
   testUsers.add(ctx.from.id)
-
-  return ctx.reply("🧪 Test mode ENABLED\nYou are now treated as a paid user.")
+  ctx.reply("🧪 Test mode ENABLED")
 })
 
 bot.command('stoptest', async (ctx) => {
@@ -354,10 +333,10 @@ bot.command('stoptest', async (ctx) => {
   }
 
   testUsers.delete(ctx.from.id)
-
-  return ctx.reply("🛑 Test mode DISABLED\nBack to normal behavior.")
+  ctx.reply("🛑 Test mode DISABLED")
 })
 
-// 🚀 START BOT
+
+// 🚀 START
 bot.launch()
 console.log("Bot is running...")

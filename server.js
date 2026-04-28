@@ -1,27 +1,34 @@
 require('dotenv').config()
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
+const { createClient } = require('@supabase/supabase-js')
 
-const fs = require('fs')
-const path = require('path')
-
-const DATA_FILE = path.join(__dirname, 'payments.json')
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+)
 
 const app = express()
 
 const processedPayments = new Set()
 
-function savePayment(data) {
-  let payments = []
+// ✅ SAVE TO SUPABASE
+async function savePayment({ userId, amount, method }) {
+  const { error } = await supabase
+    .from('payments')
+    .insert([
+      {
+        user_id: String(userId),
+        amount: Number(amount),
+        method
+      }
+    ])
 
-  if (fs.existsSync(DATA_FILE)) {
-    const raw = fs.readFileSync(DATA_FILE)
-    payments = JSON.parse(raw)
+  if (error) {
+    console.log("❌ Supabase error:", error.message)
+  } else {
+    console.log("✅ Saved to Supabase")
   }
-
-  payments.push(data)
-
-  fs.writeFileSync(DATA_FILE, JSON.stringify(payments, null, 2))
 }
 
 
@@ -59,11 +66,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     if (!userId) return res.sendStatus(200)
 
     // ✅ SAVE PAYMENT
-    savePayment({
+    await savePayment({
       userId,
       amount,
-      method: "stripe",
-      date: new Date().toISOString()
+      method: "stripe"
     })
 
     try {
@@ -114,11 +120,10 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
       if (!userId) return res.sendStatus(200)
 
       // ✅ SAVE PAYMENT
-      savePayment({
+      await savePayment({
         userId,
-        amount: resource.amount?.value || "unknown",
-        method: "paypal",
-        date: new Date().toISOString()
+        amount: resource.amount?.value,
+        method: "paypal"
       })
 
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
@@ -144,7 +149,7 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 })
 
 
-// 🔹 PAYPAL FALLBACK
+// 🔹 PAYPAL FALLBACK (backup if webhook fails)
 app.get('/success', async (req, res) => {
   const { token, user_id } = req.query
 

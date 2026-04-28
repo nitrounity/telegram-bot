@@ -14,6 +14,8 @@ global.bot = bot
 
 const seenUsers = new Set()
 
+const testUsers = new Set()
+
 // 🔒 Loading keyboard
 const loadingKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('⏳ Processing...', 'noop')],
@@ -22,6 +24,11 @@ const loadingKeyboard = Markup.inlineKeyboard([
 bot.action('noop', (ctx) => ctx.answerCbQuery())
 
 async function hasPaid(userId) {
+  // 🔥 TEST MODE OVERRIDE
+  if (String(userId) === String(process.env.ADMIN_ID) && testUsers.has(userId)) {
+    return true
+  }
+
   const { data, error } = await supabase
     .from('payments')
     .select('user_id')
@@ -324,6 +331,25 @@ bot.command('access', async (ctx) => {
   }
 })
 
+bot.command('test', async (ctx) => {
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
+    return ctx.reply("❌ Not authorized.")
+  }
+
+  testUsers.add(ctx.from.id)
+
+  return ctx.reply("🧪 Test mode ENABLED\nYou are now treated as a paid user.")
+})
+
+bot.command('stoptest', async (ctx) => {
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
+    return ctx.reply("❌ Not authorized.")
+  }
+
+  testUsers.delete(ctx.from.id)
+
+  return ctx.reply("🛑 Test mode DISABLED\nBack to normal behavior.")
+})
 
 // 🚀 START BOT
 bot.launch()

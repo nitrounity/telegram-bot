@@ -2,6 +2,8 @@ require('dotenv').config()
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 
+const processedPayments = new Set()
+
 const app = express()
 
 
@@ -25,8 +27,17 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object
+    const paymentId = session.id // 🔑 unique Stripe ID
     const userId = session.metadata?.user_id
     const amount = session.amount_total / 100
+
+    // 🚫 DUPLICATE CHECK (MUST BE FIRST)
+    if (processedPayments.has(paymentId)) {
+      console.log("⚠️ Duplicate Stripe ignored:", paymentId)
+      return res.sendStatus(200)
+    }
+
+    processedPayments.add(paymentId)
 
     if (!userId) return res.sendStatus(200)
 
@@ -55,25 +66,33 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   res.sendStatus(200)
 })
 
-
 // 🔹 PAYPAL WEBHOOK (🔥 MAIN SYSTEM)
 app.post('/paypal-webhook', express.json(), async (req, res) => {
   console.log("🟡 PayPal Webhook HIT")
 
   const event = req.body
-  console.log("Event:", event.event_type)
 
   if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
     try {
       const resource = event.resource
-      const userId = resource.custom_id // 👈 comes from bot.js
 
-      if (!userId) {
-        console.log("❌ No user_id in PayPal webhook")
+      const paymentId = resource.id // 🔑 unique PayPal ID
+      const userId = resource.custom_id
+
+      // 🚫 DUPLICATE CHECK
+      if (processedPayments.has(paymentId)) {
+        console.log("⚠️ Duplicate PayPal event ignored:", paymentId)
         return res.sendStatus(200)
       }
 
-      console.log("💰 PayPal payment from:", userId)
+      processedPayments.add(paymentId)
+
+      if (!userId) {
+        console.log("❌ Missing user_id")
+        return res.sendStatus(200)
+      }
+
+      console.log("💰 PayPal payment:", paymentId, "User:", userId)
 
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
         member_limit: 1
@@ -81,15 +100,13 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
       await global.bot.telegram.sendMessage(
         userId,
-        `✅ PayPal payment received!\nJoin here:\n${link.invite_link}`
+        `✅ Payment received!\nJoin here:\n${link.invite_link}`
       )
 
       await global.bot.telegram.sendMessage(
         process.env.ADMIN_ID,
         `💰 PayPal Payment\nUser: ${userId}`
       )
-
-      console.log("✅ PayPal webhook complete")
 
     } catch (err) {
       console.log("❌ PayPal webhook error:", err.message)
@@ -98,7 +115,6 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
   res.sendStatus(200)
 })
-
 
 // 🔹 PAYPAL FALLBACK (OPTIONAL BUT SAFE)
 app.get('/success', async (req, res) => {

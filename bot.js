@@ -7,6 +7,11 @@ global.bot = bot
 
 const seenUsers = new Set()
 
+const loadingKeyboard = Markup.inlineKeyboard([
+  [Markup.button.callback('⏳ Processing...', 'noop')],
+])
+
+bot.action('noop', (ctx) => ctx.answerCbQuery())
 
 // 🔹 START
 bot.start(async (ctx) => {
@@ -51,7 +56,8 @@ bot.action('buy', (ctx) => {
 // 🔹 STRIPE
 bot.action('stripe', async (ctx) => {
   try {
-    await ctx.editMessageText("⏳ Generating Stripe payment...")
+    // 🔒 LOCK BUTTONS
+    await ctx.editMessageText("⏳ Generating Stripe payment...", loadingKeyboard)
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -70,6 +76,7 @@ bot.action('stripe', async (ctx) => {
       }
     })
 
+    // 🔓 UNLOCK BUTTONS
     return ctx.editMessageText(
       `💳 Pay with Stripe:\n${session.url}`,
       Markup.inlineKeyboard([
@@ -86,13 +93,13 @@ bot.action('stripe', async (ctx) => {
   }
 })
 
-
 // 🔹 PAYPAL
 bot.action('paypal', async (ctx) => {
   try {
     const userId = ctx.from.id
 
-    await ctx.editMessageText("⏳ Generating PayPal payment...")
+    // 🔒 LOCK BUTTONS
+    await ctx.editMessageText("⏳ Generating PayPal payment...", loadingKeyboard)
 
     const auth = Buffer.from(
       process.env.PAYPAL_CLIENT_ID + ":" + process.env.PAYPAL_SECRET
@@ -133,14 +140,13 @@ bot.action('paypal', async (ctx) => {
     })
 
     if (!orderRes.ok) {
-      console.log("PayPal order error")
       return ctx.editMessageText("❌ Failed to create PayPal payment.")
     }
 
     const orderData = await orderRes.json()
-
     const approveLink = orderData.links.find(l => l.rel === "approve").href
 
+    // 🔓 UNLOCK BUTTONS
     return ctx.editMessageText(
       `💰 Pay with PayPal:\n${approveLink}`,
       Markup.inlineKeyboard([
@@ -156,7 +162,6 @@ bot.action('paypal', async (ctx) => {
     return ctx.editMessageText("❌ PayPal error. Try again.")
   }
 })
-
 
 // 🔹 CRYPTO
 bot.action('crypto', (ctx) => {

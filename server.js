@@ -2,9 +2,27 @@ require('dotenv').config()
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 
-const processedPayments = new Set()
+const fs = require('fs')
+const path = require('path')
+
+const DATA_FILE = path.join(__dirname, 'payments.json')
 
 const app = express()
+
+const processedPayments = new Set()
+
+function savePayment(data) {
+  let payments = []
+
+  if (fs.existsSync(DATA_FILE)) {
+    const raw = fs.readFileSync(DATA_FILE)
+    payments = JSON.parse(raw)
+  }
+
+  payments.push(data)
+
+  fs.writeFileSync(DATA_FILE, JSON.stringify(payments, null, 2))
+}
 
 
 // 🔹 STRIPE WEBHOOK
@@ -27,11 +45,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object
-    const paymentId = session.id // 🔑 unique Stripe ID
+    const paymentId = session.id
     const userId = session.metadata?.user_id
     const amount = session.amount_total / 100
 
-    // 🚫 DUPLICATE CHECK (MUST BE FIRST)
     if (processedPayments.has(paymentId)) {
       console.log("⚠️ Duplicate Stripe ignored:", paymentId)
       return res.sendStatus(200)
@@ -40,6 +57,14 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     processedPayments.add(paymentId)
 
     if (!userId) return res.sendStatus(200)
+
+    // ✅ SAVE PAYMENT
+    savePayment({
+      userId,
+      amount,
+      method: "stripe",
+      date: new Date().toISOString()
+    })
 
     try {
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
@@ -66,7 +91,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   res.sendStatus(200)
 })
 
-// 🔹 PAYPAL WEBHOOK (🔥 MAIN SYSTEM)
+
+// 🔹 PAYPAL WEBHOOK
 app.post('/paypal-webhook', express.json(), async (req, res) => {
   console.log("🟡 PayPal Webhook HIT")
 
@@ -75,24 +101,25 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
   if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
     try {
       const resource = event.resource
-
-      const paymentId = resource.id // 🔑 unique PayPal ID
+      const paymentId = resource.id
       const userId = resource.custom_id
 
-      // 🚫 DUPLICATE CHECK
       if (processedPayments.has(paymentId)) {
-        console.log("⚠️ Duplicate PayPal event ignored:", paymentId)
+        console.log("⚠️ Duplicate PayPal ignored:", paymentId)
         return res.sendStatus(200)
       }
 
       processedPayments.add(paymentId)
 
-      if (!userId) {
-        console.log("❌ Missing user_id")
-        return res.sendStatus(200)
-      }
+      if (!userId) return res.sendStatus(200)
 
-      console.log("💰 PayPal payment:", paymentId, "User:", userId)
+      // ✅ SAVE PAYMENT
+      savePayment({
+        userId,
+        amount: resource.amount?.value || "unknown",
+        method: "paypal",
+        date: new Date().toISOString()
+      })
 
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
         member_limit: 1
@@ -116,7 +143,8 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
   res.sendStatus(200)
 })
 
-// 🔹 PAYPAL FALLBACK (OPTIONAL BUT SAFE)
+
+// 🔹 PAYPAL FALLBACK
 app.get('/success', async (req, res) => {
   const { token, user_id } = req.query
 

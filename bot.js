@@ -147,9 +147,9 @@ bot.action('stripe', async (ctx) => {
       success_url: `https://t.me/${process.env.BOT_USERNAME}`,
       cancel_url: `https://t.me/${process.env.BOT_USERNAME}`,
       metadata: {
-        user_id: ctx.from.id
-      }
-    })
+  user_id: ctx.from.id,
+  username: ctx.from.username || "no_username"
+})
 
     return ctx.editMessageText(
       `💳 Pay with Stripe:\n${session.url}`,

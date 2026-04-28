@@ -53,7 +53,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object
     const paymentId = session.id
-    const userId = session.metadata?.user_id
+    const username = session.metadata?.username || "no_username"
     const amount = session.amount_total / 100
 
     if (processedPayments.has(paymentId)) {
@@ -89,7 +89,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   `🎉 *New Payment Received!*\n\n` +
   `*Details:*\n` +
   `• Method: STRIPE\n` +
-  `• User: [Open Profile](tg://user?id=${userId})\n` +
+  `• User: @${username}\n` +
+  `• Profile: [Open](tg://user?id=${userId})\n` +
   `• User ID: \`${userId}\`\n` +
   `• Amount: *$${amount}*\n` +
   `• Plan: ONETIMEFEE\n` +

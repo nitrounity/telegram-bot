@@ -4,6 +4,8 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const { createClient } = require('@supabase/supabase-js')
 
 const replyMode = new Map()
+const userMap = new Map()
+const supportCooldown = new Map()
 
 // 🔑 Supabase
 const supabase = createClient(
@@ -59,6 +61,8 @@ bot.start(async (ctx) => {
   const userId = ctx.from.id
   const username = ctx.from.username || "no_username"
   const name = ctx.from.first_name || "no_name"
+
+  userMap.set(userId, username)
 
   if (!seenUsers.has(userId)) {
     seenUsers.add(userId)
@@ -186,19 +190,21 @@ bot.action('back_main', (ctx) => {
   )
 })
 
-// 🔹 SUPPORT REPLY BUTTON
+// 🔹 SUPPORT REPLY BUTTON (UPDATED)
 bot.action(/reply_(.+)/, async (ctx) => {
   if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
     return ctx.answerCbQuery("Not allowed")
   }
 
   const userId = ctx.match[1]
+  const username = userMap.get(userId) || "user"
+
   replyMode.set(ctx.from.id, userId)
 
   await ctx.answerCbQuery()
 
   await ctx.reply(
-    `✍️ Send your reply to user ${userId}`,
+    `✍️ Replying to @${username}`,
     {
       reply_markup: {
         inline_keyboard: [
@@ -243,13 +249,15 @@ bot.command('stoptest', (ctx) => {
   ctx.reply("🛑 Test OFF")
 })
 
-// 🔹 SUPPORT SYSTEM (FIXED)
+// 🔹 SUPPORT SYSTEM (UPDATED)
 bot.on('message', async (ctx) => {
   if (!ctx.message.text) return
 
   const userId = ctx.from.id
   const username = ctx.from.username || "no_username"
   const text = ctx.message.text
+
+  userMap.set(userId, username)
 
   if (text.startsWith('/')) return
 
@@ -276,7 +284,7 @@ bot.on('message', async (ctx) => {
     return
   }
 
-  // USER → ADMIN (SAFE VERSION)
+  // USER → ADMIN
   try {
     await bot.telegram.sendMessage(
       process.env.ADMIN_ID,
@@ -290,7 +298,13 @@ bot.on('message', async (ctx) => {
       }
     )
 
-    await ctx.reply("✅ Message sent to support. We'll reply shortly.")
+    const now = Date.now()
+    const last = supportCooldown.get(userId) || 0
+
+    if (now - last > 86400000) {
+      await ctx.reply("✅ Message sent to support. We'll reply shortly.")
+      supportCooldown.set(userId, now)
+    }
 
   } catch (err) {
     console.log("❌ Support error:", err.message)

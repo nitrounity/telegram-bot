@@ -187,6 +187,44 @@ bot.action('back_main', (ctx) => {
   )
 })
 
+// 🔹 ADMIN STATS COMMAND
+const fs = require('fs')
+const path = require('path')
+
+const DATA_FILE = path.join(__dirname, 'payments.json')
+
+bot.command('stats', async (ctx) => {
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
+    return ctx.reply("❌ You are not authorized.")
+  }
+
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      return ctx.reply("No payments yet.")
+    }
+
+    const raw = fs.readFileSync(DATA_FILE)
+    const payments = JSON.parse(raw)
+
+    const totalRevenue = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+    const totalUsers = new Set(payments.map(p => p.userId)).size
+
+    const stripeCount = payments.filter(p => p.method === 'stripe').length
+    const paypalCount = payments.filter(p => p.method === 'paypal').length
+
+    await ctx.reply(
+      `📊 Stats:\n\n` +
+      `💰 Revenue: $${totalRevenue}\n` +
+      `👥 Users: ${totalUsers}\n\n` +
+      `💳 Stripe: ${stripeCount}\n` +
+      `💰 PayPal: ${paypalCount}`
+    )
+
+  } catch (err) {
+    console.log(err)
+    ctx.reply("Error reading stats.")
+  }
+})
 
 // 🚀 START
 bot.launch()

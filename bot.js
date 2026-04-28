@@ -36,6 +36,20 @@ async function hasPaid(userId) {
   return data && data.length > 0
 }
 
+async function isUserInGroup(userId) {
+  try {
+    const member = await bot.telegram.getChatMember(process.env.GROUP_ID, userId)
+
+    return (
+      member.status === 'member' ||
+      member.status === 'administrator' ||
+      member.status === 'creator'
+    )
+  } catch (err) {
+    return false
+  }
+}
+
 // 🔹 START
 bot.start(async (ctx) => {
   const userId = ctx.from.id
@@ -55,22 +69,29 @@ bot.start(async (ctx) => {
   }
 
   // 🔥 CHECK IF USER ALREADY PAID
-  const paid = await hasPaid(userId)
+  
+const paid = await hasPaid(userId)
 
-  if (paid) {
-    try {
-      const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-        member_limit: 1
-      })
+if (paid) {
+  const inGroup = await isUserInGroup(userId)
 
-      return ctx.reply(
-        `✅ You already have access!\n\nJoin here:\n${link.invite_link}`
-      )
-    } catch (err) {
-      console.log(err.message)
-      return ctx.reply("Error generating access link.")
-    }
+  if (inGroup) {
+    return ctx.reply("✅ You already have access to the group.")
   }
+
+  try {
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
+
+    return ctx.reply(
+      `✅ You already have access!\n\nJoin here:\n${link.invite_link}`
+    )
+  } catch (err) {
+    console.log(err.message)
+    return ctx.reply("Error generating access link.")
+  }
+}
 
   // ❌ NOT PAID → SHOW PAYMENT
   return ctx.reply(
@@ -272,6 +293,34 @@ bot.command('stats', async (ctx) => {
   } catch (err) {
     console.log(err)
     ctx.reply("❌ Error loading stats.")
+  }
+})
+
+// 🔹 ACCESS COMMAND
+bot.command('access', async (ctx) => {
+  const userId = ctx.from.id
+
+  const paid = await hasPaid(userId)
+
+  if (!paid) {
+    return ctx.reply("❌ You don’t have access yet. Please purchase first.")
+  }
+
+  const inGroup = await isUserInGroup(userId)
+
+  if (inGroup) {
+    return ctx.reply("✅ You already have access to the group.")
+  }
+
+  try {
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
+
+    return ctx.reply(`🔑 Your access link:\n${link.invite_link}`)
+  } catch (err) {
+    console.log(err.message)
+    return ctx.reply("Error generating access link.")
   }
 })
 

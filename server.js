@@ -85,9 +85,18 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       )
 
       await global.bot.telegram.sendMessage(
-        process.env.ADMIN_ID,
-        `💰 Stripe Payment\nUser: ${userId}\nAmount: $${amount}`
-      )
+  process.env.ADMIN_ID,
+  `🎉 *New Payment Received!*\n\n` +
+  `*Details:*\n` +
+  `• Method: STRIPE\n` +
+  `• User ID: \`${userId}\`\n` +
+  `• Amount: *$${amount}*\n` +
+  `• Plan: ONETIMEFEE\n` +
+  `• Billing: Lifetime\n` +
+  `• Date: ${new Date().toLocaleString()}\n\n` +
+  `✅ Access granted automatically.`,
+  { parse_mode: "Markdown" }
+)
 
       console.log("✅ Stripe complete")
 
@@ -140,9 +149,18 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
       )
 
       await global.bot.telegram.sendMessage(
-        process.env.ADMIN_ID,
-        `💰 PayPal Payment\nUser: ${userId}`
-      )
+  process.env.ADMIN_ID,
+  `🎉 *New Payment Received!*\n\n` +
+  `*Details:*\n` +
+  `• Method: PAYPAL\n` +
+  `• User ID: \`${userId}\`\n` +
+  `• Amount: *$${resource.amount?.value}*\n` +
+  `• Plan: ONETIMEFEE\n` +
+  `• Billing: Lifetime\n` +
+  `• Date: ${new Date().toLocaleString()}\n\n` +
+  `✅ Access granted automatically.`,
+  { parse_mode: "Markdown" }
+)
 
     } catch (err) {
       console.log("❌ PayPal webhook error:", err.message)
@@ -195,9 +213,18 @@ app.get('/success', async (req, res) => {
     )
 
     await global.bot.telegram.sendMessage(
-      process.env.ADMIN_ID,
-      `💰 PayPal (fallback)\nUser: ${user_id}`
-    )
+  process.env.ADMIN_ID,
+  `🎉 *New Payment Received!*\n\n` +
+  `*Details:*\n` +
+  `• Method: PAYPAL (fallback)\n` +
+  `• User ID: \`${user_id}\`\n` +
+  `• Amount: *(captured)*\n` +
+  `• Plan: ONETIMEFEE\n` +
+  `• Billing: Lifetime\n` +
+  `• Date: ${new Date().toLocaleString()}\n\n` +
+  `✅ Access granted automatically.`,
+  { parse_mode: "Markdown" }
+)
 
     res.send("Payment successful! Return to Telegram.")
 

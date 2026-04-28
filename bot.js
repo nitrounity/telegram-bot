@@ -83,8 +83,10 @@ if (paid) {
   const inGroup = await isUserInGroup(userId)
 
   if (inGroup) {
-    return ctx.reply("✅ You already have access to the group.")
-  }
+    return ctx.reply(
+  `✅ You already have access to the group.\n\n` +
+  `💡 Use /access anytime if you need a new invite link.`
+)
 
   try {
     const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
@@ -313,7 +315,8 @@ bot.command('access', async (ctx) => {
     return ctx.reply("❌ You don’t have access yet. Please purchase first.")
   }
 
-  const inGroup = await isUserInGroup(userId)
+  const inGroup =
+  testUsers.has(userId) ? false : await isUserInGroup(userId)
 
   if (inGroup) {
     return ctx.reply("✅ You already have access to the group.")

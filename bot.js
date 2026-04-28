@@ -80,13 +80,15 @@ bot.start(async (ctx) => {
 const paid = await hasPaid(userId)
 
 if (paid) {
-  const inGroup = await isUserInGroup(userId)
+  const inGroup =
+    testUsers.has(userId) ? false : await isUserInGroup(userId)
 
   if (inGroup) {
     return ctx.reply(
-  `✅ You already have access to the group.\n\n` +
-  `💡 Use /access anytime if you need a new invite link.`
-)
+      `✅ You already have access to the group.\n\n` +
+      `💡 Use /access anytime if you need a new invite link.`
+    )
+  }
 
   try {
     const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
@@ -94,7 +96,9 @@ if (paid) {
     })
 
     return ctx.reply(
-      `✅ You already have access!\n\nJoin here:\n${link.invite_link}`
+      `✅ You already have access!\n\n` +
+      `🔑 Join here:\n${link.invite_link}\n\n` +
+      `💡 Use /access anytime if you need a new invite link.`
     )
   } catch (err) {
     console.log(err.message)

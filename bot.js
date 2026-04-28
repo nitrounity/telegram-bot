@@ -1,17 +1,26 @@
 require('dotenv').config()
 const { Telegraf, Markup } = require('telegraf')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
+const { createClient } = require('@supabase/supabase-js')
+
+// 🔑 Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+)
 
 const bot = new Telegraf(process.env.BOT_TOKEN)
 global.bot = bot
 
 const seenUsers = new Set()
 
+// 🔒 Loading keyboard
 const loadingKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('⏳ Processing...', 'noop')],
 ])
 
 bot.action('noop', (ctx) => ctx.answerCbQuery())
+
 
 // 🔹 START
 bot.start(async (ctx) => {
@@ -56,7 +65,6 @@ bot.action('buy', (ctx) => {
 // 🔹 STRIPE
 bot.action('stripe', async (ctx) => {
   try {
-    // 🔒 LOCK BUTTONS
     await ctx.editMessageText("⏳ Generating Stripe payment...", loadingKeyboard)
 
     const session = await stripe.checkout.sessions.create({
@@ -76,7 +84,6 @@ bot.action('stripe', async (ctx) => {
       }
     })
 
-    // 🔓 UNLOCK BUTTONS
     return ctx.editMessageText(
       `💳 Pay with Stripe:\n${session.url}`,
       Markup.inlineKeyboard([
@@ -93,12 +100,12 @@ bot.action('stripe', async (ctx) => {
   }
 })
 
+
 // 🔹 PAYPAL
 bot.action('paypal', async (ctx) => {
   try {
     const userId = ctx.from.id
 
-    // 🔒 LOCK BUTTONS
     await ctx.editMessageText("⏳ Generating PayPal payment...", loadingKeyboard)
 
     const auth = Buffer.from(
@@ -146,7 +153,6 @@ bot.action('paypal', async (ctx) => {
     const orderData = await orderRes.json()
     const approveLink = orderData.links.find(l => l.rel === "approve").href
 
-    // 🔓 UNLOCK BUTTONS
     return ctx.editMessageText(
       `💰 Pay with PayPal:\n${approveLink}`,
       Markup.inlineKeyboard([
@@ -162,6 +168,7 @@ bot.action('paypal', async (ctx) => {
     return ctx.editMessageText("❌ PayPal error. Try again.")
   }
 })
+
 
 // 🔹 CRYPTO
 bot.action('crypto', (ctx) => {
@@ -187,45 +194,55 @@ bot.action('back_main', (ctx) => {
   )
 })
 
-// 🔹 ADMIN STATS COMMAND
-const fs = require('fs')
-const path = require('path')
 
-const DATA_FILE = path.join(__dirname, 'payments.json')
-
+// 🔹 ADMIN STATS (SUPABASE)
 bot.command('stats', async (ctx) => {
   if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
-    return ctx.reply("❌ You are not authorized.")
+    return ctx.reply("❌ Not authorized.")
   }
 
   try {
-    if (!fs.existsSync(DATA_FILE)) {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*')
+
+    if (error) {
+      console.log(error)
+      return ctx.reply("❌ Failed to fetch stats.")
+    }
+
+    if (!data || data.length === 0) {
       return ctx.reply("No payments yet.")
     }
 
-    const raw = fs.readFileSync(DATA_FILE)
-    const payments = JSON.parse(raw)
+    const totalRevenue = data.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+    const totalUsers = new Set(data.map(p => p.user_id)).size
 
-    const totalRevenue = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
-    const totalUsers = new Set(payments.map(p => p.userId)).size
+    const stripeCount = data.filter(p => p.method === 'stripe').length
+    const paypalCount = data.filter(p => p.method === 'paypal').length
 
-    const stripeCount = payments.filter(p => p.method === 'stripe').length
-    const paypalCount = payments.filter(p => p.method === 'paypal').length
+    const recent = data
+      .slice(-5)
+      .reverse()
+      .map(p => `$${p.amount} (${p.method})`)
+      .join('\n')
 
     await ctx.reply(
       `📊 Stats:\n\n` +
       `💰 Revenue: $${totalRevenue}\n` +
       `👥 Users: ${totalUsers}\n\n` +
       `💳 Stripe: ${stripeCount}\n` +
-      `💰 PayPal: ${paypalCount}`
+      `💰 PayPal: ${paypalCount}\n\n` +
+      `🕒 Recent:\n${recent}`
     )
 
   } catch (err) {
     console.log(err)
-    ctx.reply("Error reading stats.")
+    ctx.reply("❌ Error loading stats.")
   }
 })
 
-// 🚀 START
+
+// 🚀 START BOT
 bot.launch()
 console.log("Bot is running...")

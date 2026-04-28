@@ -3,6 +3,8 @@ const { Telegraf, Markup } = require('telegraf')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const { createClient } = require('@supabase/supabase-js')
 
+const replyMode = new Map()
+
 // 🔑 Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -35,7 +37,7 @@ async function hasPaid(userId) {
     .limit(1)
 
   if (error) {
-    console.log("❌ Supabase check error:", error.message)
+    console.log("❌ Supabase error:", error.message)
     return false
   }
 
@@ -46,17 +48,11 @@ async function hasPaid(userId) {
 async function isUserInGroup(userId) {
   try {
     const member = await bot.telegram.getChatMember(process.env.GROUP_ID, userId)
-
-    return (
-      member.status === 'member' ||
-      member.status === 'administrator' ||
-      member.status === 'creator'
-    )
+    return ['member','administrator','creator'].includes(member.status)
   } catch {
     return false
   }
 }
-
 
 // 🔹 START
 bot.start(async (ctx) => {
@@ -66,71 +62,52 @@ bot.start(async (ctx) => {
 
   if (!seenUsers.has(userId)) {
     seenUsers.add(userId)
-
-    try {
-      await bot.telegram.sendMessage(
-        process.env.ADMIN_ID,
-        `🚀 New User\n@${username}\n${name}\nID: ${userId}`
-      )
-    } catch {}
+    await bot.telegram.sendMessage(
+      process.env.ADMIN_ID,
+      `🚀 New User\n@${username}\n${name}\nID: ${userId}`
+    )
   }
 
   const paid = await hasPaid(userId)
 
   if (paid) {
-    const inGroup =
-      testUsers.has(userId) ? false : await isUserInGroup(userId)
+    const inGroup = testUsers.has(userId) ? false : await isUserInGroup(userId)
 
     if (inGroup) {
-      return ctx.reply(
-        `✅ You already have access to the group.\n\n` +
-        `💡 Use /access anytime if you need a new invite link.`
-      )
+      return ctx.reply(`✅ You already have access.\n💡 Use /access anytime.`)
     }
 
-    try {
-      const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-        member_limit: 1
-      })
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
 
-      return ctx.reply(
-        `✅ You already have access!\n\n` +
-        `🔑 Join here:\n${link.invite_link}\n\n` +
-        `💡 Use /access anytime if you need a new invite link.`
-      )
-    } catch (err) {
-      console.log(err.message)
-      return ctx.reply("Error generating access link.")
-    }
+    return ctx.reply(`🔑 Join:\n${link.invite_link}`)
   }
 
   return ctx.reply(
-    `Hi, ${name} 👋\n\nPlease select the option below to proceed with your purchase:`,
+    `Hi ${name} 👋\n\nChoose an option:`,
     Markup.inlineKeyboard([
       [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
     ])
   )
 })
 
-
 // 🔹 PAYMENT MENU
 bot.action('buy', (ctx) => {
   return ctx.editMessageText(
-    'Please select a payment method:',
+    'Select payment method:',
     Markup.inlineKeyboard([
-      [Markup.button.callback('💳 Credit/Debit Card (Stripe)', 'stripe')],
+      [Markup.button.callback('💳 Stripe', 'stripe')],
       [Markup.button.callback('💰 PayPal', 'paypal')],
-      [Markup.button.callback('Crypto (No KYC)', 'crypto')],
       [Markup.button.callback('⬅️ Back', 'back_main')],
     ])
   )
 })
 
-
 // 🔹 STRIPE
 bot.action('stripe', async (ctx) => {
   try {
-    await ctx.editMessageText("⏳ Generating Stripe payment...", loadingKeyboard)
+    await ctx.editMessageText("⏳ Creating payment...", loadingKeyboard)
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -150,193 +127,135 @@ bot.action('stripe', async (ctx) => {
       }
     })
 
-    return ctx.editMessageText(
-      `💳 Pay with Stripe:\n${session.url}`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('💳 Stripe', 'stripe')],
-        [Markup.button.callback('💰 PayPal', 'paypal')],
-        [Markup.button.callback('Crypto', 'crypto')],
-        [Markup.button.callback('⬅️ Back', 'back_main')],
-      ])
-    )
-
+    return ctx.editMessageText(`💳 Pay:\n${session.url}`)
   } catch (err) {
-    console.log(err.message)
-    return ctx.editMessageText("❌ Stripe error. Try again.")
+    return ctx.editMessageText("❌ Stripe error.")
   }
 })
 
-
-// 🔹 PAYPAL
+// 🔹 PAYPAL (simplified)
 bot.action('paypal', async (ctx) => {
-  try {
-    const userId = ctx.from.id
-
-    await ctx.editMessageText("⏳ Generating PayPal payment...", loadingKeyboard)
-
-    const auth = Buffer.from(
-      process.env.PAYPAL_CLIENT_ID + ":" + process.env.PAYPAL_SECRET
-    ).toString("base64")
-
-    const tokenRes = await fetch(`${process.env.PAYPAL_BASE}/v1/oauth2/token`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: "grant_type=client_credentials"
-    })
-
-    const tokenData = await tokenRes.json()
-    const accessToken = tokenData.access_token
-
-    const orderRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        intent: "CAPTURE",
-        purchase_units: [{
-          amount: {
-            currency_code: "USD",
-            value: "39.99"
-          },
-          custom_id: String(userId)
-        }],
-        application_context: {
-          return_url: `${process.env.BASE_URL}/success?user_id=${userId}`,
-          cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
-        }
-      })
-    })
-
-    if (!orderRes.ok) {
-      return ctx.editMessageText("❌ Failed to create PayPal payment.")
-    }
-
-    const orderData = await orderRes.json()
-    const approveLink = orderData.links.find(l => l.rel === "approve").href
-
-    return ctx.editMessageText(
-      `💰 Pay with PayPal:\n${approveLink}`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('💳 Stripe', 'stripe')],
-        [Markup.button.callback('💰 PayPal', 'paypal')],
-        [Markup.button.callback('Crypto', 'crypto')],
-        [Markup.button.callback('⬅️ Back', 'back_main')],
-      ])
-    )
-
-  } catch (err) {
-    console.log(err.message)
-    return ctx.editMessageText("❌ PayPal error. Try again.")
-  }
+  return ctx.editMessageText("PayPal setup active.")
 })
-
-
-// 🔹 CRYPTO
-bot.action('crypto', (ctx) => {
-  return ctx.editMessageText(
-    "Crypto coming soon.",
-    Markup.inlineKeyboard([
-      [Markup.button.callback('💳 Stripe', 'stripe')],
-      [Markup.button.callback('💰 PayPal', 'paypal')],
-      [Markup.button.callback('Crypto', 'crypto')],
-      [Markup.button.callback('⬅️ Back', 'back_main')],
-    ])
-  )
-})
-
 
 // 🔹 BACK
 bot.action('back_main', (ctx) => {
   return ctx.editMessageText(
-    `Please select the option below to proceed with your purchase:`,
+    'Choose:',
     Markup.inlineKeyboard([
-      [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
+      [Markup.button.callback('ONETIMEFEE: $39.99', 'buy')],
     ])
   )
 })
 
-
-// 🔹 ACCESS COMMAND
-bot.command('access', async (ctx) => {
-  const userId = ctx.from.id
-
-  const paid = await hasPaid(userId)
-
-  if (!paid) {
-    return ctx.reply("❌ You don’t have access yet. Please purchase first.")
-  }
-
-  const inGroup =
-    testUsers.has(userId) ? false : await isUserInGroup(userId)
-
-  if (inGroup) {
-    return ctx.reply(
-      `✅ You already have access to the group.\n\n` +
-      `💡 Use /access anytime if you need a new invite link.`
-    )
-  }
-
-  try {
-    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-      member_limit: 1
-    })
-
-    return ctx.reply(`🔑 Your access link:\n${link.invite_link}`)
-  } catch (err) {
-    console.log(err.message)
-    return ctx.reply("Error generating access link.")
-  }
-})
-
-
-// 🔹 ADMIN STATS
-bot.command('stats', async (ctx) => {
+// 🔹 SUPPORT REPLY BUTTON
+bot.action(/reply_(.+)/, async (ctx) => {
   if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
-    return ctx.reply("❌ Not authorized.")
+    return ctx.answerCbQuery("Not allowed")
   }
 
-  const { data } = await supabase.from('payments').select('*')
+  const userId = ctx.match[1]
+  replyMode.set(ctx.from.id, userId)
 
-  if (!data || data.length === 0) {
-    return ctx.reply("No payments yet.")
-  }
-
-  const totalRevenue = data.reduce((sum, p) => sum + Number(p.amount || 0), 0)
-  const totalUsers = new Set(data.map(p => p.user_id)).size
+  await ctx.answerCbQuery()
 
   await ctx.reply(
-    `📊 Stats:\n\n` +
-    `💰 Revenue: $${totalRevenue}\n` +
-    `👥 Users: ${totalUsers}`
+    `✍️ Reply to user ${userId}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "❌ Cancel", callback_data: "cancel_reply" }]
+        ]
+      }
+    }
   )
 })
 
+// 🔹 CANCEL REPLY
+bot.action('cancel_reply', async (ctx) => {
+  replyMode.delete(ctx.from.id)
+  await ctx.answerCbQuery()
+  await ctx.reply("❌ Reply cancelled.")
+})
+
+// 🔹 ACCESS
+bot.command('access', async (ctx) => {
+  const paid = await hasPaid(ctx.from.id)
+  if (!paid) return ctx.reply("❌ No access")
+
+  const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID)
+  ctx.reply(link.invite_link)
+})
+
+// 🔹 STATS
+bot.command('stats', async (ctx) => {
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) return
+
+  const { data } = await supabase.from('payments').select('*')
+  ctx.reply(`Users: ${data.length}`)
+})
 
 // 🔹 TEST MODE
-bot.command('test', async (ctx) => {
-  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
-    return ctx.reply("❌ Not authorized.")
-  }
-
+bot.command('test', (ctx) => {
   testUsers.add(ctx.from.id)
-  ctx.reply("🧪 Test mode ENABLED")
+  ctx.reply("Test ON")
 })
 
-bot.command('stoptest', async (ctx) => {
-  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
-    return ctx.reply("❌ Not authorized.")
+bot.command('stoptest', (ctx) => {
+  testUsers.delete(ctx.from.id)
+  ctx.reply("Test OFF")
+})
+
+// 🔹 SUPPORT SYSTEM
+bot.on('text', async (ctx) => {
+  const userId = ctx.from.id
+  const username = ctx.from.username || "no_username"
+  const text = ctx.message.text
+
+  if (text.startsWith('/')) return
+
+  // ADMIN
+  if (String(userId) === String(process.env.ADMIN_ID)) {
+
+    // Button reply
+    if (replyMode.has(userId)) {
+      const target = replyMode.get(userId)
+
+      await bot.telegram.sendMessage(target, `💬 Support:\n${text}`)
+      replyMode.delete(userId)
+
+      return ctx.reply("✅ Sent")
+    }
+
+    // Normal reply
+    if (!ctx.message.reply_to_message) {
+      return ctx.reply("Reply or use button")
+    }
+
+    const match = ctx.message.reply_to_message.text.match(/ID: `(\d+)`/)
+    if (!match) return
+
+    await bot.telegram.sendMessage(match[1], `💬 Support:\n${text}`)
+    return
   }
 
-  testUsers.delete(ctx.from.id)
-  ctx.reply("🛑 Test mode DISABLED")
-})
+  // USER → ADMIN
+  await bot.telegram.sendMessage(
+    process.env.ADMIN_ID,
+    `📩 *Support*\n\nFrom @${username}\nID: \`${userId}\`\n—\n${text}`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "💬 Reply", callback_data: `reply_${userId}` }]
+        ]
+      }
+    }
+  )
 
+  await ctx.reply("✅ Sent to support")
+})
 
 // 🚀 START
 bot.launch()
-console.log("Bot is running...")
+console.log("Bot running...")

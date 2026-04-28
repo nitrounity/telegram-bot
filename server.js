@@ -89,6 +89,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   `🎉 *New Payment Received!*\n\n` +
   `*Details:*\n` +
   `• Method: STRIPE\n` +
+  `• User: [Open Profile](tg://user?id=${userId})\n` +
   `• User ID: \`${userId}\`\n` +
   `• Amount: *$${amount}*\n` +
   `• Plan: ONETIMEFEE\n` +
@@ -97,7 +98,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   `✅ Access granted automatically.`,
   { parse_mode: "Markdown" }
 )
-
       console.log("✅ Stripe complete")
 
     } catch (err) {
@@ -153,6 +153,7 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
   `🎉 *New Payment Received!*\n\n` +
   `*Details:*\n` +
   `• Method: PAYPAL\n` +
+  `• User: [Open Profile](tg://user?id=${userId})\n` +
   `• User ID: \`${userId}\`\n` +
   `• Amount: *$${resource.amount?.value}*\n` +
   `• Plan: ONETIMEFEE\n` +
@@ -217,6 +218,7 @@ app.get('/success', async (req, res) => {
   `🎉 *New Payment Received!*\n\n` +
   `*Details:*\n` +
   `• Method: PAYPAL (fallback)\n` +
+  `• User: [Open Profile](tg://user?id=${user_id})\n` +
   `• User ID: \`${user_id}\`\n` +
   `• Amount: *(captured)*\n` +
   `• Plan: ONETIMEFEE\n` +

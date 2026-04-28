@@ -301,7 +301,7 @@ bot.on('text', async (ctx) => {
     }
   )
 
-  await ctx.reply("✅ Message sent to support.")
+  await ctx.reply("✅ Message sent to support. We'll reply shortly.")
 })
 
 

@@ -255,7 +255,9 @@ bot.command('stoptest', (ctx) => {
 
 
 // 🔹 SUPPORT SYSTEM
-bot.on('text', async (ctx) => {
+bot.on('message', async (ctx) => {
+  if (!ctx.message.text) return
+
   const userId = ctx.from.id
   const username = ctx.from.username || "no_username"
   const text = ctx.message.text
@@ -265,7 +267,6 @@ bot.on('text', async (ctx) => {
   // ADMIN
   if (String(userId) === String(process.env.ADMIN_ID)) {
 
-    // Button reply
     if (replyMode.has(userId)) {
       const target = replyMode.get(userId)
 
@@ -275,7 +276,6 @@ bot.on('text', async (ctx) => {
       return ctx.reply("✅ Reply sent.")
     }
 
-    // Normal reply
     if (!ctx.message.reply_to_message) {
       return ctx.reply("⚠️ Reply or use button.")
     }
@@ -303,7 +303,6 @@ bot.on('text', async (ctx) => {
 
   await ctx.reply("✅ Message sent to support. We'll reply shortly.")
 })
-
 
 // 🚀 START
 bot.launch()

@@ -96,7 +96,7 @@ bot.start(async (ctx) => {
     [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
   ])
 )
-
+})
 
 // 🔹 PAYMENT MENU
 bot.action('buy', (ctx) => {

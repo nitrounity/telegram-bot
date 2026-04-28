@@ -89,12 +89,13 @@ bot.start(async (ctx) => {
   }
 
   return ctx.reply(
-    `Hi ${name} 👋\n\nPlease select an option:`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
-    ])
-  )
-})
+  `Hi, ${name} 👋\n\n` +
+  `💬 Chat here for Customer Support\n\n` +
+  `Please select the option below to proceed with your purchase:`,
+  Markup.inlineKeyboard([
+    [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
+  ])
+)
 
 
 // 🔹 PAYMENT MENU

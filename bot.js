@@ -21,6 +21,20 @@ const loadingKeyboard = Markup.inlineKeyboard([
 
 bot.action('noop', (ctx) => ctx.answerCbQuery())
 
+async function hasPaid(userId) {
+  const { data, error } = await supabase
+    .from('payments')
+    .select('user_id')
+    .eq('user_id', String(userId))
+    .limit(1)
+
+  if (error) {
+    console.log("❌ Supabase check error:", error.message)
+    return false
+  }
+
+  return data && data.length > 0
+}
 
 // 🔹 START
 bot.start(async (ctx) => {
@@ -28,6 +42,7 @@ bot.start(async (ctx) => {
   const username = ctx.from.username || "no_username"
   const name = ctx.from.first_name || "no_name"
 
+  // 🚀 Notify admin (first time only)
   if (!seenUsers.has(userId)) {
     seenUsers.add(userId)
 
@@ -39,6 +54,25 @@ bot.start(async (ctx) => {
     } catch {}
   }
 
+  // 🔥 CHECK IF USER ALREADY PAID
+  const paid = await hasPaid(userId)
+
+  if (paid) {
+    try {
+      const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+        member_limit: 1
+      })
+
+      return ctx.reply(
+        `✅ You already have access!\n\nJoin here:\n${link.invite_link}`
+      )
+    } catch (err) {
+      console.log(err.message)
+      return ctx.reply("Error generating access link.")
+    }
+  }
+
+  // ❌ NOT PAID → SHOW PAYMENT
   return ctx.reply(
     `Hi, ${name} 👋\n\nPlease select the option below to proceed with your purchase:`,
     Markup.inlineKeyboard([
@@ -46,7 +80,6 @@ bot.start(async (ctx) => {
     ])
   )
 })
-
 
 // 🔹 PAYMENT MENU
 bot.action('buy', (ctx) => {

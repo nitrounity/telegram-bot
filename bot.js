@@ -6,6 +6,7 @@ const { createClient } = require('@supabase/supabase-js')
 const replyMode = new Map()
 const userMap = new Map()
 const supportCooldown = new Map()
+const fetch = require('node-fetch')
 
 // 🔑 Supabase
 const supabase = createClient(

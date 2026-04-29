@@ -120,7 +120,9 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
     try {
       const resource = event.resource
       const paymentId = resource.id
-      const userId = resource.custom_id
+      const userId =
+  resource.custom_id ||
+  resource.purchase_units?.[0]?.custom_id
 
       if (processedPayments.has(paymentId)) {
         console.log("⚠️ Duplicate PayPal ignored:", paymentId)

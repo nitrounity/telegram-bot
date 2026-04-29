@@ -192,11 +192,12 @@ bot.action('paypal', async (ctx) => {
       body: JSON.stringify({
         intent: "CAPTURE",
         purchase_units: [{
-          amount: {
-            currency_code: "USD",
-            value: "39.99"
-          }
-        }]
+  amount: {
+    currency_code: "USD",
+    value: "39.99"
+  },
+  custom_id: String(userId)
+}]
       })
     })
 

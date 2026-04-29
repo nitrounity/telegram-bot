@@ -172,9 +172,13 @@ const tokenRes = await fetch(`${process.env.PAYPAL_BASE}/v1/oauth2/token`, {
   body: "grant_type=client_credentials"
 })
 
+if (!tokenRes.ok) {
+  console.log("PayPal token error:", await tokenRes.text())
+  return ctx.editMessageText("❌ PayPal auth failed.")
+}
+
 const tokenData = await tokenRes.json()
 const accessToken = tokenData.access_token
-
 const orderRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders`, {
   method: "POST",
   headers: {
@@ -202,7 +206,12 @@ if (!orderRes.ok) {
 }
 
 const orderData = await orderRes.json()
-const approveLink = orderData.links.find(l => l.rel === "approve").href
+const approve = orderData.links.find(l => l.rel === "approve")
+if (!approve) {
+  return ctx.editMessageText("❌ PayPal link not found.")
+}
+
+const approveLink = approve.href
 
 return ctx.editMessageText(
   `💰 Pay with PayPal:\n${approveLink}`,
@@ -214,7 +223,9 @@ return ctx.editMessageText(
   ])
 )
 
-} catch (err) {console.log(err.message)return ctx.editMessageText("❌ PayPal error. Try again.")}})// 🔹 CRYPTO
+} catch (err) {console.log(err.message)return ctx.editMessageText("❌ PayPal error. Try again.")}})
+
+// 🔹 CRYPTO
 bot.action('crypto', (ctx) => {
   return ctx.editMessageText(
     "Crypto coming soon.",

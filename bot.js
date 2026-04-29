@@ -366,10 +366,9 @@ bot.on('message', async (ctx) => {
     }
 
   } catch (err) {
-    console.log("❌ Support error:", err.message)
-    await ctx.reply("❌ Failed to contact support. Please try again.")
-  }
-})
+  console.log(err.message)
+  return ctx.editMessageText("❌ PayPal error. Try again.")
+}
 
 // 🚀 START
 bot.launch()

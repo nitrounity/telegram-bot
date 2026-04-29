@@ -224,7 +224,10 @@ return ctx.editMessageText(
   ])
 )
 
-} catch (err) {console.log(err.message); return ctx.editMessageText("❌ PayPal error. Try again.")}})
+} catch (err) {
+  console.log("🔥 PAYPAL FULL ERROR:", err)
+  await ctx.editMessageText("❌ PayPal error. Try again.")
+}
 
 // 🔹 CRYPTO
 bot.action('crypto', (ctx) => {

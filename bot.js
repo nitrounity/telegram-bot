@@ -162,7 +162,6 @@ bot.action('paypal', async (ctx) => {
 
     await ctx.editMessageText("⏳ Generating PayPal payment...", loadingKeyboard)
 
-    // 🔑 AUTH
     const auth = Buffer.from(
       `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_SECRET}`
     ).toString("base64")
@@ -177,25 +176,18 @@ bot.action('paypal', async (ctx) => {
     })
 
     const tokenText = await tokenRes.text()
+    console.log("TOKEN RESPONSE:", tokenText)
 
     if (!tokenRes.ok) {
-      console.log("❌ PAYPAL TOKEN ERROR:", tokenText)
       return ctx.editMessageText("❌ PayPal auth failed.")
     }
 
-    const tokenData = JSON.parse(tokenText)
-    const accessToken = tokenData.access_token
+    const { access_token } = JSON.parse(tokenText)
 
-    if (!accessToken) {
-      console.log("❌ NO ACCESS TOKEN:", tokenData)
-      return ctx.editMessageText("❌ PayPal auth failed.")
-    }
-
-    // 💰 CREATE ORDER
     const orderRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${access_token}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -204,36 +196,24 @@ bot.action('paypal', async (ctx) => {
           amount: {
             currency_code: "USD",
             value: "39.99"
-          },
-          custom_id: String(userId)
-        }],
-        application_context: {
-          return_url: `https://t.me/${process.env.BOT_USERNAME}`,
-          cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
-        }
+          }
+        }]
       })
     })
 
     const orderText = await orderRes.text()
+    console.log("ORDER RESPONSE:", orderText)
 
     if (!orderRes.ok) {
-      console.log("❌ PAYPAL ORDER ERROR:", orderText)
       return ctx.editMessageText("❌ Failed to create PayPal payment.")
     }
 
     const orderData = JSON.parse(orderText)
 
-    const approve = orderData.links?.find(l => l.rel === "approve")
-
-    if (!approve || !approve.href) {
-      console.log("❌ NO APPROVE LINK:", orderData)
-      return ctx.editMessageText("❌ PayPal link not found.")
-    }
-
-    const approveLink = approve.href
+    const approve = orderData.links.find(l => l.rel === "approve")
 
     return ctx.editMessageText(
-      `💰 Pay with PayPal:\n${approveLink}`,
+      `💰 Pay with PayPal:\n${approve.href}`,
       Markup.inlineKeyboard([
         [Markup.button.callback('💳 Stripe', 'stripe')],
         [Markup.button.callback('💰 PayPal', 'paypal')],

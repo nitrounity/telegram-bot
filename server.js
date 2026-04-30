@@ -3,26 +3,23 @@ const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const { createClient } = require('@supabase/supabase-js')
 
+const app = express()
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 )
 
-const app = express()
-
-const processedPayments = new Set()
-
-// ✅ SAVE TO SUPABASE
-async function savePayment({ userId, amount, method }) {
+// ✅ SAVE PAYMENT (DB)
+async function savePayment({ userId, amount, method, paymentId }) {
   const { error } = await supabase
     .from('payments')
-    .insert([
-      {
-        user_id: String(userId),
-        amount: Number(amount),
-        method
-      }
-    ])
+    .insert([{
+      user_id: String(userId),
+      amount: Number(amount),
+      method,
+      payment_id: paymentId
+    }])
 
   if (error) {
     console.log("❌ Supabase error:", error.message)
@@ -30,7 +27,6 @@ async function savePayment({ userId, amount, method }) {
     console.log("✅ Saved to Supabase")
   }
 }
-
 
 // 🔹 STRIPE WEBHOOK
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -53,25 +49,31 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object
     const paymentId = session.id
+    const userId = session.metadata?.user_id
     const username = session.metadata?.username || "no_username"
     const amount = session.amount_total / 100
 
-    if (processedPayments.has(paymentId)) {
-      console.log("⚠️ Duplicate Stripe ignored:", paymentId)
-      return res.sendStatus(200)
-    }
-
-    processedPayments.add(paymentId)
-
     if (!userId) return res.sendStatus(200)
 
-    // ✅ SAVE PAYMENT
-    await savePayment({
-      userId,
-      amount,
-      method: "stripe"
-    })
+    // 🔒 Prevent duplicate DB insert (NOT delivery)
+    const { data: existing } = await supabase
+      .from('payments')
+      .select('payment_id')
+      .eq('payment_id', paymentId)
+      .limit(1)
 
+    if (!existing || existing.length === 0) {
+      await savePayment({
+        userId,
+        amount,
+        method: "stripe",
+        paymentId
+      })
+    } else {
+      console.log("⚠️ Duplicate Stripe:", paymentId)
+    }
+
+    // ✅ ALWAYS send invite
     try {
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
         member_limit: 1
@@ -79,26 +81,20 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       await global.bot.telegram.sendMessage(
         userId,
-        `✅ Payment received!\n\n` +
-        `🔑 Join here:\n${link.invite_link}\n\n` +
-        `💡 You can use /access anytime to get your link again.`
+        `✅ Payment received!\n\n🔑 Join here:\n${link.invite_link}\n\n💡 Use /access anytime.`
       )
 
       await global.bot.telegram.sendMessage(
-  process.env.ADMIN_ID,
-  `🎉 *New Payment Received!*\n\n` +
-  `*Details:*\n` +
-  `• Method: STRIPE\n` +
-  `• User: @${username}\n` +
-  `• Profile: [Open](tg://user?id=${userId})\n` +
-  `• User ID: \`${userId}\`\n` +
-  `• Amount: *$${amount}*\n` +
-  `• Plan: ONETIMEFEE\n` +
-  `• Billing: Lifetime\n` +
-  `• Date: ${new Date().toLocaleString()}\n\n` +
-  `✅ Access granted automatically.`,
-  { parse_mode: "Markdown" }
-)
+        process.env.ADMIN_ID,
+        `🎉 *New Payment Received!*\n\n` +
+        `• Method: STRIPE\n` +
+        `• User: @${username}\n` +
+        `• Profile: [Open](tg://user?id=${userId})\n` +
+        `• User ID: \`${userId}\`\n` +
+        `• Amount: *$${amount}*\n`,
+        { parse_mode: "Markdown" }
+      )
+
       console.log("✅ Stripe complete")
 
     } catch (err) {
@@ -108,7 +104,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
   res.sendStatus(200)
 })
-
 
 // 🔹 PAYPAL WEBHOOK
 app.post('/paypal-webhook', express.json(), async (req, res) => {
@@ -120,51 +115,51 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
     try {
       const resource = event.resource
       const paymentId = resource.id
+
       const userId =
-  resource.custom_id ||
-  resource.purchase_units?.[0]?.custom_id
-
-      if (processedPayments.has(paymentId)) {
-        console.log("⚠️ Duplicate PayPal ignored:", paymentId)
-        return res.sendStatus(200)
-      }
-
-      processedPayments.add(paymentId)
+        resource.custom_id ||
+        resource.purchase_units?.[0]?.custom_id
 
       if (!userId) return res.sendStatus(200)
 
-      // ✅ SAVE PAYMENT
-      await savePayment({
-        userId,
-        amount: resource.amount?.value,
-        method: "paypal"
-      })
+      const { data: existing } = await supabase
+        .from('payments')
+        .select('payment_id')
+        .eq('payment_id', paymentId)
+        .limit(1)
 
+      if (!existing || existing.length === 0) {
+        await savePayment({
+          userId,
+          amount: Number(resource.amount?.value),
+          method: "paypal",
+          paymentId
+        })
+      } else {
+        console.log("⚠️ Duplicate PayPal:", paymentId)
+      }
+
+      // ✅ ALWAYS send invite
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
         member_limit: 1
       })
 
       await global.bot.telegram.sendMessage(
         userId,
-        `✅ Payment received!\n\n` +
-        `🔑 Join here:\n${link.invite_link}\n\n` +
-        `💡 You can use /access anytime to get your link again.`
+        `✅ Payment received!\n\n🔑 Join here:\n${link.invite_link}\n\n💡 Use /access anytime.`
       )
 
       await global.bot.telegram.sendMessage(
-  process.env.ADMIN_ID,
-  `🎉 *New Payment Received!*\n\n` +
-  `*Details:*\n` +
-  `• Method: PAYPAL\n` +
-  `• User: [Open Profile](tg://user?id=${userId})\n` +
-  `• User ID: \`${userId}\`\n` +
-  `• Amount: *$${resource.amount?.value}*\n` +
-  `• Plan: ONETIMEFEE\n` +
-  `• Billing: Lifetime\n` +
-  `• Date: ${new Date().toLocaleString()}\n\n` +
-  `✅ Access granted automatically.`,
-  { parse_mode: "Markdown" }
-)
+        process.env.ADMIN_ID,
+        `🎉 *New Payment Received!*\n\n` +
+        `• Method: PAYPAL\n` +
+        `• User: [Open Profile](tg://user?id=${userId})\n` +
+        `• User ID: \`${userId}\`\n` +
+        `• Amount: *$${resource.amount?.value}*\n`,
+        { parse_mode: "Markdown" }
+      )
+
+      console.log("✅ PayPal complete")
 
     } catch (err) {
       console.log("❌ PayPal webhook error:", err.message)
@@ -173,7 +168,6 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
   res.sendStatus(200)
 })
-
 
 // 🔹 PAYPAL FALLBACK (backup)
 app.get('/success', async (req, res) => {
@@ -189,19 +183,18 @@ app.get('/success', async (req, res) => {
     const tokenRes = await fetch(`${process.env.PAYPAL_BASE}/v1/oauth2/token`, {
       method: "POST",
       headers: {
-        "Authorization": `Basic ${auth}`,
+        Authorization: `Basic ${auth}`,
         "Content-Type": "application/x-www-form-urlencoded"
       },
       body: "grant_type=client_credentials"
     })
 
-    const tokenData = await tokenRes.json()
-    const accessToken = tokenData.access_token
+    const { access_token } = await tokenRes.json()
 
     await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders/${token}/capture`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${accessToken}`
+        Authorization: `Bearer ${access_token}`
       }
     })
 
@@ -211,25 +204,8 @@ app.get('/success', async (req, res) => {
 
     await global.bot.telegram.sendMessage(
       user_id,
-      `✅ PayPal payment received!\n\n` +
-      `🔑 Join here:\n${link.invite_link}\n\n` +
-      `💡 You can use /access anytime to get your link again.`
+      `✅ PayPal payment received!\n\n🔑 Join here:\n${link.invite_link}\n\n💡 Use /access anytime.`
     )
-
-    await global.bot.telegram.sendMessage(
-  process.env.ADMIN_ID,
-  `🎉 *New Payment Received!*\n\n` +
-  `*Details:*\n` +
-  `• Method: PAYPAL (fallback)\n` +
-  `• User: [Open Profile](tg://user?id=${user_id})\n` +
-  `• User ID: \`${user_id}\`\n` +
-  `• Amount: *(captured)*\n` +
-  `• Plan: ONETIMEFEE\n` +
-  `• Billing: Lifetime\n` +
-  `• Date: ${new Date().toLocaleString()}\n\n` +
-  `✅ Access granted automatically.`,
-  { parse_mode: "Markdown" }
-)
 
     res.send("Payment successful! Return to Telegram.")
 
@@ -239,8 +215,7 @@ app.get('/success', async (req, res) => {
   }
 })
 
-
-// 🔹 START SERVER
+// 🚀 START SERVER
 app.listen(3000, () => {
   console.log("🚀 Server running on port 3000")
 })

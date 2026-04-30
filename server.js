@@ -10,7 +10,9 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 )
 
-// ✅ SAVE PAYMENT (DB)
+// =========================
+// 💾 SAVE PAYMENT
+// =========================
 async function savePayment({ userId, amount, method, paymentId }) {
   const { error } = await supabase
     .from('payments')
@@ -28,10 +30,41 @@ async function savePayment({ userId, amount, method, paymentId }) {
   }
 }
 
-// 🔹 STRIPE WEBHOOK
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  console.log("🔥 Stripe Webhook HIT")
+// =========================
+// 🔁 RETRY SEND
+// =========================
+async function sendInvite(userId, link) {
+  const message =
+    `✅ Payment received!\n\n` +
+    `🔑 Join here:\n${link}\n\n` +
+    `💡 Use /access anytime if needed.`
 
+  for (let i = 1; i <= 3; i++) {
+    try {
+      await global.bot.telegram.sendMessage(userId, message)
+      console.log(`✅ Sent (attempt ${i})`)
+      return
+    } catch (err) {
+      console.log(`❌ Attempt ${i} failed:`, err.message)
+      await new Promise(res => setTimeout(res, 2000))
+    }
+  }
+
+  // fallback
+  try {
+    await global.bot.telegram.sendMessage(
+      userId,
+      `⚠️ Payment received, but message failed.\n\n👉 Use /access to get your invite link.`
+    )
+  } catch (err) {
+    console.log("❌ Fallback failed:", err.message)
+  }
+}
+
+// =========================
+// 💳 STRIPE WEBHOOK
+// =========================
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature']
   let event
 
@@ -42,7 +75,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       process.env.STRIPE_WEBHOOK_SECRET
     )
   } catch (err) {
-    console.log("❌ Stripe webhook error:", err.message)
+    console.log("❌ Stripe error:", err.message)
     return res.sendStatus(400)
   }
 
@@ -50,65 +83,44 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     const session = event.data.object
     const paymentId = session.id
     const userId = session.metadata?.user_id
-    const username = session.metadata?.username || "no_username"
     const amount = session.amount_total / 100
 
     if (!userId) return res.sendStatus(200)
 
-    // 🔒 Prevent duplicate DB insert (NOT delivery)
-    const { data: existing } = await supabase
+    const { data } = await supabase
       .from('payments')
       .select('payment_id')
       .eq('payment_id', paymentId)
       .limit(1)
 
-    if (!existing || existing.length === 0) {
+    if (!data || data.length === 0) {
       await savePayment({
         userId,
         amount,
         method: "stripe",
         paymentId
       })
-    } else {
-      console.log("⚠️ Duplicate Stripe:", paymentId)
     }
 
-    // ✅ ALWAYS send invite
     try {
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
         member_limit: 1
       })
 
-      await global.bot.telegram.sendMessage(
-        userId,
-        `✅ Payment received!\n\n🔑 Join here:\n${link.invite_link}\n\n💡 Use /access anytime.`
-      )
-
-      await global.bot.telegram.sendMessage(
-        process.env.ADMIN_ID,
-        `🎉 *New Payment Received!*\n\n` +
-        `• Method: STRIPE\n` +
-        `• User: @${username}\n` +
-        `• Profile: [Open](tg://user?id=${userId})\n` +
-        `• User ID: \`${userId}\`\n` +
-        `• Amount: *$${amount}*\n`,
-        { parse_mode: "Markdown" }
-      )
-
-      console.log("✅ Stripe complete")
+      await sendInvite(userId, link.invite_link)
 
     } catch (err) {
-      console.log("❌ Telegram error:", err.message)
+      console.log("❌ Stripe invite error:", err.message)
     }
   }
 
   res.sendStatus(200)
 })
 
-// 🔹 PAYPAL WEBHOOK
+// =========================
+// 💰 PAYPAL WEBHOOK
+// =========================
 app.post('/paypal-webhook', express.json(), async (req, res) => {
-  console.log("🟡 PayPal Webhook HIT")
-
   const event = req.body
 
   if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
@@ -122,58 +134,40 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
       if (!userId) return res.sendStatus(200)
 
-      const { data: existing } = await supabase
+      const { data } = await supabase
         .from('payments')
         .select('payment_id')
         .eq('payment_id', paymentId)
         .limit(1)
 
-      if (!existing || existing.length === 0) {
+      if (!data || data.length === 0) {
         await savePayment({
           userId,
           amount: Number(resource.amount?.value),
           method: "paypal",
           paymentId
         })
-      } else {
-        console.log("⚠️ Duplicate PayPal:", paymentId)
       }
 
-      // ✅ ALWAYS send invite
       const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
         member_limit: 1
       })
 
-      await global.bot.telegram.sendMessage(
-        userId,
-        `✅ Payment received!\n\n🔑 Join here:\n${link.invite_link}\n\n💡 Use /access anytime.`
-      )
-
-      await global.bot.telegram.sendMessage(
-        process.env.ADMIN_ID,
-        `🎉 *New Payment Received!*\n\n` +
-        `• Method: PAYPAL\n` +
-        `• User: [Open Profile](tg://user?id=${userId})\n` +
-        `• User ID: \`${userId}\`\n` +
-        `• Amount: *$${resource.amount?.value}*\n`,
-        { parse_mode: "Markdown" }
-      )
-
-      console.log("✅ PayPal complete")
+      await sendInvite(userId, link.invite_link)
 
     } catch (err) {
-      console.log("❌ PayPal webhook error:", err.message)
+      console.log("❌ PayPal error:", err.message)
     }
   }
 
   res.sendStatus(200)
 })
 
-// 🔹 PAYPAL FALLBACK (backup)
+// =========================
+// 🔁 PAYPAL FALLBACK
+// =========================
 app.get('/success', async (req, res) => {
   const { token, user_id } = req.query
-
-  console.log("🟡 PayPal success fallback hit")
 
   try {
     const auth = Buffer.from(
@@ -202,20 +196,19 @@ app.get('/success', async (req, res) => {
       member_limit: 1
     })
 
-    await global.bot.telegram.sendMessage(
-      user_id,
-      `✅ PayPal payment received!\n\n🔑 Join here:\n${link.invite_link}\n\n💡 Use /access anytime.`
-    )
+    await sendInvite(user_id, link.invite_link)
 
-    res.send("Payment successful! Return to Telegram.")
+    res.send("Payment successful!")
 
   } catch (err) {
     console.log("❌ PayPal fallback error:", err.message)
-    res.send("Error processing payment.")
+    res.send("Error")
   }
 })
 
-// 🚀 START SERVER
+// =========================
+// 🚀 START
+// =========================
 app.listen(3000, () => {
-  console.log("🚀 Server running on port 3000")
+  console.log("🚀 Server running")
 })

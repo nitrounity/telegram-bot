@@ -314,6 +314,9 @@ bot.command('stoptest', (ctx) => {
 bot.on('message', async (ctx) => {
   if (!ctx.message.text) return
 
+  // ⛔ IGNORE GROUPS / CHANNELS
+  if (ctx.chat.type !== 'private') return
+
   const userId = ctx.from.id
   const username = ctx.from.username || "no_username"
   const text = ctx.message.text

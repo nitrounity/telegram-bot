@@ -6,6 +6,8 @@ const { createClient } = require('@supabase/supabase-js')
 const replyMode = new Map()
 const userMap = new Map()
 const supportCooldown = new Map()
+const appUrl = process.env.PUBLIC_URL || process.env.BASE_URL || process.env.APP_URL
+const adminId = String(process.env.ADMIN_ID || '').trim()
 
 // 🔑 Supabase
 const supabase = createClient(
@@ -26,16 +28,28 @@ const loadingKeyboard = Markup.inlineKeyboard([
 
 bot.action('noop', (ctx) => ctx.answerCbQuery())
 
+function normalizeUserId(userId) {
+  return String(userId).trim()
+}
+
+function isAdmin(userId) {
+  return normalizeUserId(userId) === adminId
+}
+
+function isTestUser(userId) {
+  return testUsers.has(normalizeUserId(userId))
+}
+
 // 🔹 CHECK IF USER PAID
 async function hasPaid(userId) {
-  if (String(userId) === String(process.env.ADMIN_ID) && testUsers.has(userId)) {
+  if (isAdmin(userId) && isTestUser(userId)) {
     return true
   }
 
   const { data, error } = await supabase
     .from('payments')
     .select('user_id')
-    .eq('user_id', String(userId))
+    .eq('user_id', normalizeUserId(userId))
     .limit(1)
 
   if (error) {
@@ -62,7 +76,7 @@ bot.start(async (ctx) => {
   const username = ctx.from.username || "no_username"
   const name = ctx.from.first_name || "no_name"
 
-  userMap.set(userId, username)
+  userMap.set(normalizeUserId(userId), username)
 
   if (!seenUsers.has(userId)) {
     seenUsers.add(userId)
@@ -75,7 +89,7 @@ bot.start(async (ctx) => {
   const paid = await hasPaid(userId)
 
   if (paid) {
-    const inGroup = testUsers.has(userId) ? false : await isUserInGroup(userId)
+    const inGroup = isTestUser(userId) ? false : await isUserInGroup(userId)
 
     if (inGroup) {
       return ctx.reply(
@@ -174,14 +188,14 @@ bot.action('paypal', async (ctx) => {
       body: "grant_type=client_credentials"
     })
 
-    const tokenText = await tokenRes.text()
-    console.log("TOKEN RESPONSE:", tokenText)
+    const tokenData = await tokenRes.json()
 
-    if (!tokenRes.ok) {
+    if (!tokenRes.ok || !tokenData.access_token) {
+      console.log("❌ PayPal auth failed:", JSON.stringify(tokenData))
       return ctx.editMessageText("❌ PayPal auth failed.")
     }
 
-    const { access_token } = JSON.parse(tokenText)
+    const { access_token } = tokenData
 
     const orderRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders`, {
       method: "POST",
@@ -192,25 +206,34 @@ bot.action('paypal', async (ctx) => {
       body: JSON.stringify({
         intent: "CAPTURE",
         purchase_units: [{
-  amount: {
-    currency_code: "USD",
-    value: "39.99"
-  },
-  custom_id: String(userId)
-}]
+          amount: {
+            currency_code: "USD",
+            value: "39.99"
+          },
+          custom_id: String(userId)
+        }],
+        ...(appUrl ? {
+          application_context: {
+            return_url: `${appUrl}/success?user_id=${userId}`,
+            cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
+          }
+        } : {})
       })
     })
 
-    const orderText = await orderRes.text()
-    console.log("ORDER RESPONSE:", orderText)
+    const orderData = await orderRes.json()
 
     if (!orderRes.ok) {
+      console.log("❌ PayPal order failed:", JSON.stringify(orderData))
       return ctx.editMessageText("❌ Failed to create PayPal payment.")
     }
 
-    const orderData = JSON.parse(orderText)
+    const approve = orderData.links?.find(l => l.rel === "approve")
 
-    const approve = orderData.links.find(l => l.rel === "approve")
+    if (!approve) {
+      console.log("❌ PayPal approve link missing:", JSON.stringify(orderData))
+      return ctx.editMessageText("❌ Failed to create PayPal payment link.")
+    }
 
     return ctx.editMessageText(
       `💰 Pay with PayPal:\n${approve.href}`,
@@ -253,12 +276,12 @@ bot.action('back_main', (ctx) => {
 
 // 🔹 SUPPORT REPLY BUTTON (UPDATED)
 bot.action(/reply_(.+)/, async (ctx) => {
-  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
+  if (!isAdmin(ctx.from.id)) {
     return ctx.answerCbQuery("Not allowed")
   }
 
   const userId = ctx.match[1]
-  const username = userMap.get(userId) || "user"
+  const username = userMap.get(normalizeUserId(userId)) || "user"
 
   replyMode.set(ctx.from.id, userId)
 
@@ -288,26 +311,39 @@ bot.command('access', async (ctx) => {
   const paid = await hasPaid(ctx.from.id)
   if (!paid) return ctx.reply("❌ You don’t have access.")
 
-  const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID)
-  ctx.reply(`🔑 ${link.invite_link}`)
+  const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+    member_limit: 1
+  })
+
+  return ctx.reply(`🔑 ${link.invite_link}`)
 })
 
 // 🔹 STATS
 bot.command('stats', async (ctx) => {
-  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) return
-  const { data } = await supabase.from('payments').select('*')
-  ctx.reply(`📊 Users: ${data.length}`)
+  if (!isAdmin(ctx.from.id)) return
+  const { data, error } = await supabase.from('payments').select('*')
+
+  if (error) {
+    console.log("❌ Supabase stats error:", error.message)
+    return ctx.reply("❌ Failed to fetch stats.")
+  }
+
+  return ctx.reply(`📊 Users: ${(data || []).length}`)
 })
 
 // 🔹 TEST MODE
 bot.command('test', (ctx) => {
-  testUsers.add(ctx.from.id)
-  ctx.reply("🧪 Test ON")
+  if (!isAdmin(ctx.from.id)) return
+
+  testUsers.add(normalizeUserId(ctx.from.id))
+  return ctx.reply("🧪 Test ON. You can now use /access to generate a test invite link.")
 })
 
 bot.command('stoptest', (ctx) => {
-  testUsers.delete(ctx.from.id)
-  ctx.reply("🛑 Test OFF")
+  if (!isAdmin(ctx.from.id)) return
+
+  testUsers.delete(normalizeUserId(ctx.from.id))
+  return ctx.reply("🛑 Test OFF")
 })
 
 // 🔹 SUPPORT SYSTEM (UPDATED)
@@ -321,12 +357,12 @@ bot.on('message', async (ctx) => {
   const username = ctx.from.username || "no_username"
   const text = ctx.message.text
 
-  userMap.set(userId, username)
+  userMap.set(normalizeUserId(userId), username)
 
   if (text.startsWith('/')) return
 
   // ADMIN
-  if (String(userId) === String(process.env.ADMIN_ID)) {
+  if (isAdmin(userId)) {
 
     if (replyMode.has(userId)) {
       const target = replyMode.get(userId)
@@ -341,7 +377,7 @@ bot.on('message', async (ctx) => {
       return ctx.reply("⚠️ Reply or use button.")
     }
 
-    const match = ctx.message.reply_to_message.text.match(/ID: `(\d+)`/)
+    const match = ctx.message.reply_to_message.text?.match(/ID:\s*`?(\d+)`?/)
     if (!match) return ctx.reply("❌ Could not detect user.")
 
     await bot.telegram.sendMessage(match[1], `💬 Support:\n${text}`)
@@ -379,3 +415,5 @@ bot.on('message', async (ctx) => {
 // 🚀 START
 bot.launch()
 console.log("Bot running...")
+
+module.exports = bot

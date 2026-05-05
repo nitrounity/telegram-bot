@@ -3,16 +3,46 @@ const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const { createClient } = require('@supabase/supabase-js')
 
+const bot = global.bot || require('./bot')
 const app = express()
+const PORT = process.env.PORT || 3000
+let shuttingDown = false
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 )
 
+function setShuttingDown() {
+  shuttingDown = true
+}
+
+app.use((req, res, next) => {
+  if (shuttingDown) {
+    return res.status(503).send('Server is shutting down')
+  }
+
+  return next()
+})
+
 // =========================
-// 💾 SAVE PAYMENT
+// 💾 PAYMENT HELPERS
 // =========================
+async function paymentExists(paymentId) {
+  const { data, error } = await supabase
+    .from('payments')
+    .select('payment_id')
+    .eq('payment_id', paymentId)
+    .limit(1)
+
+  if (error) {
+    console.log("❌ Supabase lookup error:", error.message)
+    throw error
+  }
+
+  return data && data.length > 0
+}
+
 async function savePayment({ userId, amount, method, paymentId }) {
   const { error } = await supabase
     .from('payments')
@@ -25,9 +55,86 @@ async function savePayment({ userId, amount, method, paymentId }) {
 
   if (error) {
     console.log("❌ Supabase error:", error.message)
-  } else {
-    console.log("✅ Saved to Supabase")
+    return false
   }
+
+  console.log("✅ Saved to Supabase")
+  return true
+}
+
+async function savePaymentIfNew(payment) {
+  if (await paymentExists(payment.paymentId)) {
+    console.log(`ℹ️ Payment already processed: ${payment.paymentId}`)
+    return false
+  }
+
+  return savePayment(payment)
+}
+
+// =========================
+// 💰 PAYPAL HELPERS
+// =========================
+async function getPayPalAccessToken() {
+  const auth = Buffer.from(
+    `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_SECRET}`
+  ).toString('base64')
+
+  const tokenRes = await fetch(`${process.env.PAYPAL_BASE}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: 'grant_type=client_credentials'
+  })
+
+  const tokenData = await tokenRes.json()
+
+  if (!tokenRes.ok || !tokenData.access_token) {
+    throw new Error(`PayPal auth failed: ${JSON.stringify(tokenData)}`)
+  }
+
+  return tokenData.access_token
+}
+
+async function verifyPayPalWebhook(req, event) {
+  if (!process.env.PAYPAL_WEBHOOK_ID) {
+    throw new Error('PAYPAL_WEBHOOK_ID is not configured')
+  }
+
+  const accessToken = await getPayPalAccessToken()
+  const verifyRes = await fetch(`${process.env.PAYPAL_BASE}/v1/notifications/verify-webhook-signature`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      auth_algo: req.headers['paypal-auth-algo'],
+      cert_url: req.headers['paypal-cert-url'],
+      transmission_id: req.headers['paypal-transmission-id'],
+      transmission_sig: req.headers['paypal-transmission-sig'],
+      transmission_time: req.headers['paypal-transmission-time'],
+      webhook_id: process.env.PAYPAL_WEBHOOK_ID,
+      webhook_event: event
+    })
+  })
+
+  const verifyData = await verifyRes.json()
+
+  if (!verifyRes.ok || verifyData.verification_status !== 'SUCCESS') {
+    throw new Error(`PayPal webhook verification failed: ${JSON.stringify(verifyData)}`)
+  }
+}
+
+function getCaptureFromOrder(order) {
+  return order.purchase_units
+    ?.flatMap(unit => unit.payments?.captures || [])
+    ?.find(capture => capture.status === 'COMPLETED')
+}
+
+function getPayPalWebhookUserId(resource) {
+  return resource.custom_id || resource.purchase_units?.[0]?.custom_id
 }
 
 // =========================
@@ -41,9 +148,9 @@ async function sendInvite(userId, link) {
 
   for (let i = 1; i <= 3; i++) {
     try {
-      await global.bot.telegram.sendMessage(userId, message)
+      await bot.telegram.sendMessage(userId, message)
       console.log(`✅ Sent (attempt ${i})`)
-      return
+      return true
     } catch (err) {
       console.log(`❌ Attempt ${i} failed:`, err.message)
       await new Promise(res => setTimeout(res, 2000))
@@ -52,13 +159,23 @@ async function sendInvite(userId, link) {
 
   // fallback
   try {
-    await global.bot.telegram.sendMessage(
+    await bot.telegram.sendMessage(
       userId,
       `⚠️ Payment received, but message failed.\n\n👉 Use /access to get your invite link.`
     )
   } catch (err) {
     console.log("❌ Fallback failed:", err.message)
   }
+
+  return false
+}
+
+async function sendNewPaymentInvite(userId) {
+  const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+    member_limit: 1
+  })
+
+  await sendInvite(userId, link.invite_link)
 }
 
 // =========================
@@ -87,28 +204,17 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     if (!userId) return res.sendStatus(200)
 
-    const { data } = await supabase
-      .from('payments')
-      .select('payment_id')
-      .eq('payment_id', paymentId)
-      .limit(1)
-
-    if (!data || data.length === 0) {
-      await savePayment({
+    try {
+      const saved = await savePaymentIfNew({
         userId,
         amount,
-        method: "stripe",
+        method: 'stripe',
         paymentId
       })
-    }
 
-    try {
-      const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-        member_limit: 1
-      })
-
-      await sendInvite(userId, link.invite_link)
-
+      if (saved) {
+        await sendNewPaymentInvite(userId)
+      }
     } catch (err) {
       console.log("❌ Stripe invite error:", err.message)
     }
@@ -123,38 +229,31 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 app.post('/paypal-webhook', express.json(), async (req, res) => {
   const event = req.body
 
-  if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+  try {
+    await verifyPayPalWebhook(req, event)
+  } catch (err) {
+    console.log("❌ PayPal webhook verification error:", err.message)
+    return res.sendStatus(400)
+  }
+
+  if (event.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
     try {
       const resource = event.resource
       const paymentId = resource.id
-
-      const userId =
-        resource.custom_id ||
-        resource.purchase_units?.[0]?.custom_id
+      const userId = getPayPalWebhookUserId(resource)
 
       if (!userId) return res.sendStatus(200)
 
-      const { data } = await supabase
-        .from('payments')
-        .select('payment_id')
-        .eq('payment_id', paymentId)
-        .limit(1)
-
-      if (!data || data.length === 0) {
-        await savePayment({
-          userId,
-          amount: Number(resource.amount?.value),
-          method: "paypal",
-          paymentId
-        })
-      }
-
-      const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-        member_limit: 1
+      const saved = await savePaymentIfNew({
+        userId,
+        amount: Number(resource.amount?.value),
+        method: 'paypal',
+        paymentId
       })
 
-      await sendInvite(userId, link.invite_link)
-
+      if (saved) {
+        await sendNewPaymentInvite(userId)
+      }
     } catch (err) {
       console.log("❌ PayPal error:", err.message)
     }
@@ -167,48 +266,60 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 // 🔁 PAYPAL FALLBACK
 // =========================
 app.get('/success', async (req, res) => {
-  const { token, user_id } = req.query
+  const { token, user_id: userId } = req.query
+
+  if (!token || !userId) {
+    return res.status(400).send('Missing payment details')
+  }
 
   try {
-    const auth = Buffer.from(
-      process.env.PAYPAL_CLIENT_ID + ":" + process.env.PAYPAL_SECRET
-    ).toString("base64")
+    const accessToken = await getPayPalAccessToken()
 
-    const tokenRes = await fetch(`${process.env.PAYPAL_BASE}/v1/oauth2/token`, {
-      method: "POST",
+    const captureRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders/${token}/capture`, {
+      method: 'POST',
       headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: "grant_type=client_credentials"
-    })
-
-    const { access_token } = await tokenRes.json()
-
-    await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders/${token}/capture`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${access_token}`
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
       }
     })
 
-    const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-      member_limit: 1
+    const order = await captureRes.json()
+
+    if (!captureRes.ok) {
+      console.log("❌ PayPal capture failed:", JSON.stringify(order))
+      return res.status(400).send('Payment capture failed')
+    }
+
+    const capture = getCaptureFromOrder(order)
+
+    if (!capture) {
+      console.log("❌ PayPal capture missing completed capture:", JSON.stringify(order))
+      return res.status(400).send('Payment was not completed')
+    }
+
+    const saved = await savePaymentIfNew({
+      userId,
+      amount: Number(capture.amount?.value),
+      method: 'paypal',
+      paymentId: capture.id
     })
 
-    await sendInvite(user_id, link.invite_link)
+    if (saved) {
+      await sendNewPaymentInvite(userId)
+    }
 
-    res.send("Payment successful!")
-
+    res.send('Payment successful!')
   } catch (err) {
     console.log("❌ PayPal fallback error:", err.message)
-    res.send("Error")
+    res.status(500).send('Error')
   }
 })
 
 // =========================
 // 🚀 START
 // =========================
-app.listen(3000, () => {
-  console.log("🚀 Server running")
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`)
 })
+
+module.exports = { server, setShuttingDown }

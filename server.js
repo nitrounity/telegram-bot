@@ -36,7 +36,7 @@ async function paymentExists(paymentId) {
     .limit(1)
 
   if (error) {
-    console.log("❌ Supabase lookup error:", error.message)
+    console.log("❌ Supabase lookup error in paymentExists():", error.message, "| paymentId:", paymentId, "| code:", error.code)
     throw error
   }
 
@@ -54,7 +54,7 @@ async function savePayment({ userId, amount, method, paymentId }) {
     }])
 
   if (error) {
-    console.log("❌ Supabase error:", error.message)
+    console.log("❌ Supabase insert error in savePayment():", error.message, "| userId:", userId, "| method:", method, "| paymentId:", paymentId, "| code:", error.code)
     return false
   }
 
@@ -74,7 +74,13 @@ async function savePaymentIfNew(payment) {
 // =========================
 // 💰 PAYPAL HELPERS
 // =========================
+const paypalTokenCache = { token: null, expiresAt: 0 }
+
 async function getPayPalAccessToken() {
+  if (paypalTokenCache.token && Date.now() < paypalTokenCache.expiresAt) {
+    return paypalTokenCache.token
+  }
+
   const auth = Buffer.from(
     `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_SECRET}`
   ).toString('base64')
@@ -85,7 +91,8 @@ async function getPayPalAccessToken() {
       Authorization: `Basic ${auth}`,
       'Content-Type': 'application/x-www-form-urlencoded'
     },
-    body: 'grant_type=client_credentials'
+    body: 'grant_type=client_credentials',
+    signal: AbortSignal.timeout(10000)
   })
 
   const tokenData = await tokenRes.json()
@@ -94,7 +101,10 @@ async function getPayPalAccessToken() {
     throw new Error(`PayPal auth failed: ${JSON.stringify(tokenData)}`)
   }
 
-  return tokenData.access_token
+  paypalTokenCache.token = tokenData.access_token
+  paypalTokenCache.expiresAt = Date.now() + 30 * 60 * 1000
+
+  return paypalTokenCache.token
 }
 
 async function verifyPayPalWebhook(req, event) {
@@ -109,6 +119,7 @@ async function verifyPayPalWebhook(req, event) {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     },
+    signal: AbortSignal.timeout(10000),
     body: JSON.stringify({
       auth_algo: req.headers['paypal-auth-algo'],
       cert_url: req.headers['paypal-cert-url'],
@@ -280,7 +291,8 @@ app.get('/success', async (req, res) => {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
-      }
+      },
+      signal: AbortSignal.timeout(10000)
     })
 
     const order = await captureRes.json()

@@ -29,7 +29,7 @@ bot.action('noop', (ctx) => ctx.answerCbQuery())
 
 // 🔹 CHECK IF USER PAID
 async function hasPaid(userId) {
-  if (String(userId) === String(process.env.ADMIN_ID) && testUsers.has(String(userId))) {
+  if (String(userId) === String(process.env.ADMIN_ID) || testUsers.has(String(userId))) {
     return true
   }
 
@@ -40,7 +40,7 @@ async function hasPaid(userId) {
     .limit(1)
 
   if (error) {
-    console.log("❌ Supabase error:", error.message)
+    console.log("❌ Supabase error in hasPaid():", error.message, "| userId:", userId, "| code:", error.code)
     return false
   }
 
@@ -172,7 +172,8 @@ bot.action('paypal', async (ctx) => {
         Authorization: `Basic ${auth}`,
         "Content-Type": "application/x-www-form-urlencoded"
       },
-      body: "grant_type=client_credentials"
+      body: "grant_type=client_credentials",
+      signal: AbortSignal.timeout(10000)
     })
 
     const tokenData = await tokenRes.json()
@@ -190,6 +191,7 @@ bot.action('paypal', async (ctx) => {
         Authorization: `Bearer ${access_token}`,
         "Content-Type": "application/json"
       },
+      signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
         intent: "CAPTURE",
         purchase_units: [{
@@ -390,9 +392,9 @@ bot.on('message', async (ctx) => {
     }
 
   } catch (err) {
-  console.log(err.message)
-  await ctx.reply("❌ Failed to contact support. Please try again.")
-}
+    console.log("❌ Support handler error:", err.stack || err.message)
+    await ctx.reply("❌ Failed to contact support. Please try again.")
+  }
 })
 
 // 🚀 START

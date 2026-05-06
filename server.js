@@ -1,17 +1,12 @@
 require('dotenv').config()
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
-const { createClient } = require('@supabase/supabase-js')
+const { paymentExists, savePayment } = require('./supabase')
 
 const bot = require('./bot')
 const app = express()
 const PORT = process.env.PORT || 3000
 let shuttingDown = false
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-)
 
 function setShuttingDown() {
   shuttingDown = true
@@ -28,40 +23,6 @@ app.use((req, res, next) => {
 // =========================
 // 💾 PAYMENT HELPERS
 // =========================
-async function paymentExists(paymentId) {
-  const { data, error } = await supabase
-    .from('payments')
-    .select('payment_id')
-    .eq('payment_id', paymentId)
-    .limit(1)
-
-  if (error) {
-    console.log("❌ Supabase lookup error in paymentExists():", error.message, "| paymentId:", paymentId, "| code:", error.code)
-    throw error
-  }
-
-  return data && data.length > 0
-}
-
-async function savePayment({ userId, amount, method, paymentId }) {
-  const { error } = await supabase
-    .from('payments')
-    .insert([{
-      user_id: String(userId),
-      amount: Number(amount),
-      method,
-      payment_id: paymentId
-    }])
-
-  if (error) {
-    console.log("❌ Supabase insert error in savePayment():", error.message, "| userId:", userId, "| method:", method, "| paymentId:", paymentId, "| code:", error.code)
-    return false
-  }
-
-  console.log("✅ Saved to Supabase")
-  return true
-}
-
 async function savePaymentIfNew(payment) {
   if (await paymentExists(payment.paymentId)) {
     console.log(`ℹ️ Payment already processed: ${payment.paymentId}`)

@@ -160,6 +160,7 @@ async function sendNewPaymentInvite(userId) {
 // 💳 STRIPE WEBHOOK
 // =========================
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  console.log("📨 Stripe webhook received")
   const sig = req.headers['stripe-signature']
   let event
 
@@ -169,6 +170,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       sig,
       process.env.STRIPE_WEBHOOK_SECRET
     )
+    console.log("✅ Stripe webhook verified | event:", event.type)
   } catch (err) {
     console.log("❌ Stripe error:", err.message)
     return res.sendStatus(400)
@@ -183,16 +185,16 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     if (!userId) return res.sendStatus(200)
 
     try {
-      const saved = await savePaymentIfNew({
-        userId,
-        amount,
-        method: 'stripe',
-        paymentId
-      })
+      const payment = { userId, amount, method: 'stripe', paymentId }
+      console.log("💾 Stripe: saving payment:", JSON.stringify(payment))
+      const saved = await savePaymentIfNew(payment)
 
       if (saved) {
+        console.log("✅ Stripe: payment saved to Supabase for userId:", userId)
         const invited = await sendNewPaymentInvite(userId)
-        if (!invited) {
+        if (invited) {
+          console.log("✅ Stripe: invite sent for userId:", userId)
+        } else {
           console.log("❌ Stripe: invite not delivered for userId:", userId)
         }
       }
@@ -208,10 +210,12 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 // 💰 PAYPAL WEBHOOK
 // =========================
 app.post('/paypal-webhook', express.json(), async (req, res) => {
+  console.log("📨 PayPal webhook received | event_type:", req.body?.event_type)
   const event = req.body
 
   try {
     await verifyPayPalWebhook(req, event)
+    console.log("✅ PayPal webhook verified | event_type:", event.event_type)
   } catch (err) {
     console.log("❌ PayPal webhook verification error:", err.message)
     return res.sendStatus(400)
@@ -225,16 +229,16 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
       if (!userId) return res.sendStatus(200)
 
-      const saved = await savePaymentIfNew({
-        userId,
-        amount: Number(resource.amount?.value),
-        method: 'paypal',
-        paymentId
-      })
+      const payment = { userId, amount: Number(resource.amount?.value), method: 'paypal', paymentId }
+      console.log("💾 PayPal webhook: saving payment:", JSON.stringify(payment))
+      const saved = await savePaymentIfNew(payment)
 
       if (saved) {
+        console.log("✅ PayPal webhook: payment saved to Supabase for userId:", userId)
         const invited = await sendNewPaymentInvite(userId)
-        if (!invited) {
+        if (invited) {
+          console.log("✅ PayPal webhook: invite sent for userId:", userId)
+        } else {
           console.log("❌ PayPal webhook: invite not delivered for userId:", userId)
         }
       }

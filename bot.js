@@ -298,14 +298,20 @@ bot.action('cancel_reply', async (ctx) => {
 // 🔹 ACCESS
 bot.command('access', async (ctx) => {
   const paid = await hasPaid(ctx.from.id)
-  if (!paid) return ctx.reply("❌ You don’t have access.")
+  if (!paid) return ctx.reply("❌ You don't have access.")
 
-  const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-    member_limit: 1
-  })
+  try {
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
 
-  return ctx.reply(`🔑 ${link.invite_link}`)
+    return ctx.reply(`🔑 ${link.invite_link}`)
+  } catch (err) {
+    console.log("❌ /access createChatInviteLink failed for userId:", ctx.from.id, "|", err.message)
+    return ctx.reply("❌ Failed to generate invite link. Please try again later.")
+  }
 })
+
 
 // 🔹 STATS
 bot.command('stats', async (ctx) => {

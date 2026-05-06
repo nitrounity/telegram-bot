@@ -3,7 +3,7 @@ const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const { createClient } = require('@supabase/supabase-js')
 
-const bot = global.bot || require('./bot')
+const bot = require('./bot')
 const app = express()
 const PORT = process.env.PORT || 3000
 let shuttingDown = false
@@ -182,11 +182,17 @@ async function sendInvite(userId, link) {
 }
 
 async function sendNewPaymentInvite(userId) {
-  const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-    member_limit: 1
-  })
+  try {
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
 
-  await sendInvite(userId, link.invite_link)
+    const sent = await sendInvite(userId, link.invite_link)
+    return sent
+  } catch (err) {
+    console.log("❌ sendNewPaymentInvite() failed for userId:", userId, "|", err.message)
+    return false
+  }
 }
 
 // =========================
@@ -224,7 +230,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       })
 
       if (saved) {
-        await sendNewPaymentInvite(userId)
+        const invited = await sendNewPaymentInvite(userId)
+        if (!invited) {
+          console.log("❌ Stripe: invite not delivered for userId:", userId)
+        }
       }
     } catch (err) {
       console.log("❌ Stripe invite error:", err.message)
@@ -263,7 +272,10 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
       })
 
       if (saved) {
-        await sendNewPaymentInvite(userId)
+        const invited = await sendNewPaymentInvite(userId)
+        if (!invited) {
+          console.log("❌ PayPal webhook: invite not delivered for userId:", userId)
+        }
       }
     } catch (err) {
       console.log("❌ PayPal error:", err.message)
@@ -317,7 +329,10 @@ app.get('/success', async (req, res) => {
     })
 
     if (saved) {
-      await sendNewPaymentInvite(userId)
+      const invited = await sendNewPaymentInvite(userId)
+      if (!invited) {
+        console.log("❌ PayPal fallback: invite not delivered for userId:", userId)
+      }
     }
 
     res.send('Payment successful!')

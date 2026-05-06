@@ -1,18 +1,12 @@
 require('dotenv').config()
 const { Telegraf, Markup } = require('telegraf')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
-const { createClient } = require('@supabase/supabase-js')
+const { checkPayment, getPaymentCount } = require('./supabase')
 
 const replyMode = new Map()
 const userMap = new Map()
 const supportCooldown = new Map()
 const appUrl = process.env.PUBLIC_URL || process.env.BASE_URL || process.env.APP_URL
-
-// 🔑 Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-)
 
 const bot = new Telegraf(process.env.BOT_TOKEN)
 global.bot = bot
@@ -33,18 +27,12 @@ async function hasPaid(userId) {
     return true
   }
 
-  const { data, error } = await supabase
-    .from('payments')
-    .select('user_id')
-    .eq('user_id', String(userId))
-    .limit(1)
-
-  if (error) {
-    console.log("❌ Supabase error in hasPaid():", error.message, "| userId:", userId, "| code:", error.code)
-    return false
+  try {
+    return await checkPayment(userId)
+  } catch (err) {
+    console.log("⚠️ hasPaid() DB error — failing open | userId:", userId, "| code:", err.code, "| message:", err.message)
+    return true
   }
-
-  return data && data.length > 0
 }
 
 // 🔹 CHECK IF USER IN GROUP
@@ -316,14 +304,14 @@ bot.command('access', async (ctx) => {
 // 🔹 STATS
 bot.command('stats', async (ctx) => {
   if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) return
-  const { data, error } = await supabase.from('payments').select('*')
 
-  if (error) {
-    console.log("❌ Supabase stats error:", error.message)
+  try {
+    const count = await getPaymentCount()
+    return ctx.reply(`📊 Users: ${count}`)
+  } catch (err) {
+    console.log("❌ /stats DB error | userId:", ctx.from.id, "| code:", err.code, "| message:", err.message)
     return ctx.reply("❌ Failed to fetch stats.")
   }
-
-  return ctx.reply(`📊 Users: ${(data || []).length}`)
 })
 
 // 🔹 TEST MODE

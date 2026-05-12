@@ -1,4 +1,5 @@
 require('dotenv').config()
+const bot = require('./bot')
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 
@@ -42,16 +43,16 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     if (!userId) return res.sendStatus(200)
 
     try {
-      const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-        member_limit: 1
-      })
+      const link = await bot.telegram.createChatInviteLink(
+  process.env.GROUP_ID
+)
 
-      await global.bot.telegram.sendMessage(
+      await bot.telegram.sendMessage(
         userId,
         `✅ Payment received!\nJoin here:\n${link.invite_link}`
       )
 
-      await global.bot.telegram.sendMessage(
+      await bot.telegram.sendMessage(
         process.env.ADMIN_ID,
         `💰 Stripe Payment\nUser: ${userId}\nAmount: $${amount}`
       )
@@ -94,16 +95,16 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
       console.log("💰 PayPal payment:", paymentId, "User:", userId)
 
-      const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-        member_limit: 1
-      })
+      const link = await bot.telegram.createChatInviteLink(
+  process.env.GROUP_ID
+)
 
-      await global.bot.telegram.sendMessage(
+      await bot.telegram.sendMessage(
         userId,
         `✅ Payment received!\nJoin here:\n${link.invite_link}`
       )
 
-      await global.bot.telegram.sendMessage(
+      await bot.telegram.sendMessage(
         process.env.ADMIN_ID,
         `💰 PayPal Payment\nUser: ${userId}`
       )
@@ -146,16 +147,16 @@ app.get('/success', async (req, res) => {
       }
     })
 
-    const link = await global.bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
       member_limit: 1
     })
 
-    await global.bot.telegram.sendMessage(
+    await bot.telegram.sendMessage(
       user_id,
       `✅ PayPal payment received!\nJoin here:\n${link.invite_link}`
     )
 
-    await global.bot.telegram.sendMessage(
+    await bot.telegram.sendMessage(
       process.env.ADMIN_ID,
       `💰 PayPal (fallback)\nUser: ${user_id}`
     )

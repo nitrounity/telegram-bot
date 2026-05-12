@@ -1,6 +1,7 @@
 require('dotenv').config()
 const { Telegraf, Markup } = require('telegraf')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
+const supportUsers = new Set()
 
 const bot = new Telegraf(process.env.BOT_TOKEN)
 global.bot = bot
@@ -8,7 +9,12 @@ global.bot = bot
 const seenUsers = new Set()
 
 const loadingKeyboard = Markup.inlineKeyboard([
-  [Markup.button.callback('⏳ Processing...', 'noop')],
+  [
+    Markup.button.callback(
+      '⏳ Processing...',
+      'noop'
+    )
+  ]
 ])
 
 bot.action('noop', (ctx) => ctx.answerCbQuery())
@@ -32,9 +38,21 @@ bot.start(async (ctx) => {
 
   return ctx.reply(
     `Hi, ${name} 👋\n\nPlease select the option below to proceed with your purchase:`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
-    ])
+      
+Markup.inlineKeyboard([
+  [
+    Markup.button.callback(
+      'ONETIMEFEE: $39.99 / Lifetime',
+      'buy'
+    )
+  ],
+  [
+    Markup.button.callback(
+      '💬 Contact Support',
+      'support'
+    )
+  ]
+])
   )
 })
 
@@ -49,6 +67,18 @@ bot.action('buy', (ctx) => {
       [Markup.button.callback('Crypto (No KYC)', 'crypto')],
       [Markup.button.callback('⬅️ Back', 'back_main')],
     ])
+  )
+})
+
+// 🔹 SUPPORT
+bot.action('support', async (ctx) => {
+
+  supportUsers.add(ctx.from.id)
+
+  await ctx.answerCbQuery()
+
+  return ctx.reply(
+    "💬 Send your support message.\n\nOur team will review it shortly."
   )
 })
 
@@ -181,13 +211,74 @@ bot.action('crypto', (ctx) => {
 bot.action('back_main', (ctx) => {
   return ctx.editMessageText(
     `Please select the option below to proceed with your purchase:`,
+
     Markup.inlineKeyboard([
-      [Markup.button.callback('ONETIMEFEE: $39.99 / Lifetime', 'buy')],
+      [
+        Markup.button.callback(
+          'ONETIMEFEE: $39.99 / Lifetime',
+          'buy'
+        )
+      ],
+      [
+        Markup.button.callback(
+          '💬 Contact Support',
+          'support'
+        )
+      ]
     ])
   )
 })
 
+bot.on('text', async (ctx) => {
+
+  // Ignore commands
+  if (ctx.message.text.startsWith('/')) return
+
+  // Ignore users not in support mode
+  if (!supportUsers.has(ctx.from.id)) return
+
+// Ignore groups
+if (ctx.chat.type !== 'private') return
+
+  const username = ctx.from.username || "no_username"
+
+  try {
+
+    await bot.telegram.sendMessage(
+      process.env.ADMIN_ID,
+
+      `📩 SUPPORT MESSAGE\n\n` +
+      `👤 @${username}\n` +
+      `🆔 ${ctx.from.id}\n\n` +
+      `${ctx.message.text}`
+    )
+
+    await ctx.reply(
+      "✅ Your support message has been sent."
+    )
+
+  } catch (err) {
+
+    console.log(err)
+
+    await ctx.reply(
+      "❌ Failed to send support message."
+    )
+  }
+
+  supportUsers.delete(ctx.from.id)
+})
+
+process.on('unhandledRejection', (err) => {
+  console.log('UNHANDLED REJECTION:', err)
+})
+
+process.on('uncaughtException', (err) => {
+  console.log('UNCAUGHT EXCEPTION:', err)
+})
 
 // 🚀 START
 bot.launch()
 console.log("Bot is running...")
+
+module.exports = bot

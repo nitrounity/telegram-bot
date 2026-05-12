@@ -2,6 +2,7 @@ require('dotenv').config()
 const { Telegraf, Markup } = require('telegraf')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const supportUsers = new Set()
+const replyMode = new Map()
 
 const bot = new Telegraf(process.env.BOT_TOKEN)
 global.bot = bot
@@ -20,42 +21,46 @@ const loadingKeyboard = Markup.inlineKeyboard([
 bot.action('noop', (ctx) => ctx.answerCbQuery())
 
 // 🔹 START
+// 🔹 START
 bot.start(async (ctx) => {
+
   const userId = ctx.from.id
   const username = ctx.from.username || "no_username"
   const name = ctx.from.first_name || "no_name"
 
   if (!seenUsers.has(userId)) {
+
     seenUsers.add(userId)
 
     try {
+
       await bot.telegram.sendMessage(
         process.env.ADMIN_ID,
         `🚀 New User\n@${username}\n${name}\nID: ${userId}`
       )
+
     } catch {}
   }
 
   return ctx.reply(
     `Hi, ${name} 👋\n\nPlease select the option below to proceed with your purchase:`,
-      
-Markup.inlineKeyboard([
-  [
-    Markup.button.callback(
-      'ONETIMEFEE: $39.99 / Lifetime',
-      'buy'
-    )
-  ],
-  [
-    Markup.button.callback(
-      '💬 Contact Support',
-      'support'
-    )
-  ]
-])
+
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          'ONETIMEFEE: $39.99 / Lifetime',
+          'buy'
+        )
+      ],
+      [
+        Markup.button.callback(
+          '💬 Contact Support',
+          'support'
+        )
+      ]
+    ])
   )
 })
-
 
 // 🔹 PAYMENT MENU
 bot.action('buy', (ctx) => {
@@ -82,6 +87,24 @@ bot.action('support', async (ctx) => {
   )
 })
 
+// 🔹 ADMIN REPLY BUTTON
+bot.action(/reply_(.+)/, async (ctx) => {
+
+  // Admin only
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) {
+    return ctx.answerCbQuery("Not allowed")
+  }
+
+  const targetUser = ctx.match[1]
+
+  replyMode.set(ctx.from.id, targetUser)
+
+  await ctx.answerCbQuery()
+
+  return ctx.reply(
+    `💬 Reply mode enabled.\n\nSend your support reply.`
+  )
+})
 
 // 🔹 STRIPE
 bot.action('stripe', async (ctx) => {
@@ -234,11 +257,44 @@ bot.on('text', async (ctx) => {
   // Ignore commands
   if (ctx.message.text.startsWith('/')) return
 
+  // Ignore groups
+  if (ctx.chat.type !== 'private') return
+
+  // 🔹 ADMIN REPLY MODE
+  if (String(ctx.from.id) === String(process.env.ADMIN_ID)) {
+
+    if (replyMode.has(ctx.from.id)) {
+
+      const targetUser = replyMode.get(ctx.from.id)
+
+      try {
+
+        await bot.telegram.sendMessage(
+          targetUser,
+          `🛠 Support Team\n\n${ctx.message.text}`
+        )
+
+        await ctx.reply(
+          "✅ Reply sent."
+        )
+
+      } catch (err) {
+
+        console.log(err)
+
+        await ctx.reply(
+          "❌ Failed to send reply."
+        )
+      }
+
+      replyMode.delete(ctx.from.id)
+
+      return
+    }
+  }
+
   // Ignore users not in support mode
   if (!supportUsers.has(ctx.from.id)) return
-
-// Ignore groups
-if (ctx.chat.type !== 'private') return
 
   const username = ctx.from.username || "no_username"
 
@@ -250,7 +306,20 @@ if (ctx.chat.type !== 'private') return
       `📩 SUPPORT MESSAGE\n\n` +
       `👤 @${username}\n` +
       `🆔 ${ctx.from.id}\n\n` +
-      `${ctx.message.text}`
+      `${ctx.message.text}`,
+
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "💬 Reply",
+                callback_data: `reply_${ctx.from.id}`
+              }
+            ]
+          ]
+        }
+      }
     )
 
     await ctx.reply(

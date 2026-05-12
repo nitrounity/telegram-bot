@@ -5,6 +5,20 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET)
 
 const processedPayments = new Set()
 
+let groupInviteLink = null
+
+async function initializeInviteLink() {
+  try {
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
+    groupInviteLink = link.invite_link
+    console.log("✅ Invite link initialized:", groupInviteLink)
+  } catch (err) {
+    console.log("❌ Failed to initialize invite link:", err.message)
+  }
+}
+
 const app = express()
 
 
@@ -43,13 +57,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     if (!userId) return res.sendStatus(200)
 
     try {
-      const link = await bot.telegram.createChatInviteLink(
-  process.env.GROUP_ID
-)
+      if (!groupInviteLink) await initializeInviteLink()
 
       await bot.telegram.sendMessage(
         userId,
-        `✅ Payment received!\nJoin here:\n${link.invite_link}`
+        `✅ Payment received!\nJoin here:\n${groupInviteLink}`
       )
 
       await bot.telegram.sendMessage(
@@ -95,13 +107,11 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
       console.log("💰 PayPal payment:", paymentId, "User:", userId)
 
-      const link = await bot.telegram.createChatInviteLink(
-  process.env.GROUP_ID
-)
+      if (!groupInviteLink) await initializeInviteLink()
 
       await bot.telegram.sendMessage(
         userId,
-        `✅ Payment received!\nJoin here:\n${link.invite_link}`
+        `✅ Payment received!\nJoin here:\n${groupInviteLink}`
       )
 
       await bot.telegram.sendMessage(
@@ -147,13 +157,11 @@ app.get('/success', async (req, res) => {
       }
     })
 
-    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
-      member_limit: 1
-    })
+    if (!groupInviteLink) await initializeInviteLink()
 
     await bot.telegram.sendMessage(
       user_id,
-      `✅ PayPal payment received!\nJoin here:\n${link.invite_link}`
+      `✅ PayPal payment received!\nJoin here:\n${groupInviteLink}`
     )
 
     await bot.telegram.sendMessage(
@@ -173,4 +181,5 @@ app.get('/success', async (req, res) => {
 // 🔹 START SERVER
 app.listen(3000, () => {
   console.log("🚀 Server running on port 3000")
+  initializeInviteLink()
 })

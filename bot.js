@@ -21,7 +21,6 @@ const loadingKeyboard = Markup.inlineKeyboard([
 bot.action('noop', (ctx) => ctx.answerCbQuery())
 
 // 🔹 START
-// 🔹 START
 bot.start(async (ctx) => {
 
   const userId = ctx.from.id
@@ -335,7 +334,6 @@ bot.on('text', async (ctx) => {
     )
   }
 
-  supportUsers.delete(ctx.from.id)
 })
 
 process.on('unhandledRejection', (err) => {

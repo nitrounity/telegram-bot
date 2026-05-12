@@ -6,8 +6,18 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const processedPayments = new Set()
 
 let groupInviteLink = null
+let initializingLink = false
 
 async function initializeInviteLink() {
+  if (initializingLink) return
+  initializingLink = true
+
+  if (!process.env.GROUP_ID) {
+    console.log("❌ GROUP_ID environment variable is not set")
+    initializingLink = false
+    return
+  }
+
   try {
     const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
       member_limit: 1
@@ -16,6 +26,9 @@ async function initializeInviteLink() {
     console.log("✅ Invite link initialized:", groupInviteLink)
   } catch (err) {
     console.log("❌ Failed to initialize invite link:", err.message)
+    groupInviteLink = null
+  } finally {
+    initializingLink = false
   }
 }
 
@@ -59,6 +72,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     try {
       if (!groupInviteLink) await initializeInviteLink()
 
+      if (!groupInviteLink) {
+        console.log("❌ Invite link unavailable — aborting Stripe message to user:", userId)
+        return res.sendStatus(200)
+      }
+
       await bot.telegram.sendMessage(
         userId,
         `✅ Payment received!\nJoin here:\n${groupInviteLink}`
@@ -66,7 +84,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       await bot.telegram.sendMessage(
         process.env.ADMIN_ID,
-        `💰 Stripe Payment\nUser: ${userId}\nAmount: $${amount}`
+        `💰 Stripe Payment\nUser: ${userId}\nAmount: ${amount}`
       )
 
       console.log("✅ Stripe complete")
@@ -108,6 +126,11 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
       console.log("💰 PayPal payment:", paymentId, "User:", userId)
 
       if (!groupInviteLink) await initializeInviteLink()
+
+      if (!groupInviteLink) {
+        console.log("❌ Invite link unavailable — aborting PayPal message to user:", userId)
+        return res.sendStatus(200)
+      }
 
       await bot.telegram.sendMessage(
         userId,
@@ -159,6 +182,11 @@ app.get('/success', async (req, res) => {
 
     if (!groupInviteLink) await initializeInviteLink()
 
+    if (!groupInviteLink) {
+      console.log("❌ Invite link unavailable — aborting PayPal fallback message to user:", user_id)
+      return res.send("Payment received, but could not generate invite link. Please contact support.")
+    }
+
     await bot.telegram.sendMessage(
       user_id,
       `✅ PayPal payment received!\nJoin here:\n${groupInviteLink}`
@@ -179,7 +207,11 @@ app.get('/success', async (req, res) => {
 
 
 // 🔹 START SERVER
-app.listen(3000, () => {
-  console.log("🚀 Server running on port 3000")
-  initializeInviteLink()
-})
+async function start() {
+  await initializeInviteLink()
+  app.listen(3000, () => {
+    console.log("🚀 Server running on port 3000")
+  })
+}
+
+start()

@@ -344,8 +344,4 @@ process.on('uncaughtException', (err) => {
   console.log('UNCAUGHT EXCEPTION:', err)
 })
 
-// 🚀 START
-bot.launch()
-console.log("Bot is running...")
-
 module.exports = bot

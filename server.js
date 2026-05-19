@@ -3,6 +3,9 @@ const bot = require('./bot')
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 
+let isShuttingDown = false
+function setShuttingDown() { isShuttingDown = true }
+
 const processedPayments = new Set()
 
 let groupInviteLink = null
@@ -34,6 +37,12 @@ async function initializeInviteLink() {
 
 const app = express()
 
+// 🔹 TELEGRAM WEBHOOK
+const WEBHOOK_PATH = '/telegram-webhook'
+app.use(WEBHOOK_PATH, express.json(), (req, res, next) => {
+  if (isShuttingDown) return res.sendStatus(503)
+  next()
+}, (req, res) => bot.handleUpdate(req.body, res))
 
 // 🔹 STRIPE WEBHOOK
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -207,11 +216,33 @@ app.get('/success', async (req, res) => {
 
 
 // 🔹 START SERVER
+let server
+
 async function start() {
+  // Set up Telegram webhook before accepting traffic
+  const baseUrl = process.env.BASE_URL
+  if (!baseUrl) {
+    console.error("❌ BASE_URL environment variable is not set — cannot register webhook")
+    process.exit(1)
+  }
+
+  const webhookUrl = `${baseUrl}${WEBHOOK_PATH}`
+
+  try {
+    await bot.telegram.setWebhook(webhookUrl)
+    console.log("✅ Telegram webhook set:", webhookUrl)
+  } catch (err) {
+    console.error("❌ Failed to set Telegram webhook:", err.message)
+    process.exit(1)
+  }
+
   await initializeInviteLink()
-  app.listen(3000, () => {
+
+  server = app.listen(3000, () => {
     console.log("🚀 Server running on port 3000")
   })
 }
 
 start()
+
+module.exports = { get server() { return server }, setShuttingDown }

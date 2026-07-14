@@ -250,6 +250,40 @@ bot.action('back_main', (ctx) => {
     ])
   )
 })
+// 🔹 REINVITE (ADMIN ONLY)
+bot.command('reinvite', async (ctx) => {
+
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) return
+
+  const args = ctx.message.text.split(" ")
+
+  if (args.length < 2) {
+    return ctx.reply("Usage: /reinvite USER_ID")
+  }
+
+  const userId = args[1]
+
+  try {
+
+    const link = await bot.telegram.createChatInviteLink(process.env.GROUP_ID, {
+      member_limit: 1
+    })
+
+    await bot.telegram.sendMessage(
+      userId,
+      `✅ Welcome back!\n\nHere is your new invite link:\n${link.invite_link}`
+    )
+
+    ctx.reply("✅ Invite sent.")
+
+  } catch (err) {
+
+    console.log(err)
+    ctx.reply("❌ Failed to send invite.")
+
+  }
+
+})
 
 bot.on('text', async (ctx) => {
 

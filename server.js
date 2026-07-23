@@ -2,20 +2,18 @@ require('dotenv').config()
 const bot = require('./bot')
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
-const { createClient } = require('@supabase/supabase-js')
+const supabase = require('./lib/supabaseClient')
 
 let isShuttingDown = false
 function setShuttingDown() { isShuttingDown = true }
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
-
 // 🔹 PAYMENT DEDUPLICATION (persisted in Supabase so it survives restarts/redeploys)
-async function isPaymentProcessed(paymentId) {
+async function isPaymentProcessed(orderId) {
   try {
     const { data, error } = await supabase
       .from('processed_payments')
-      .select('id')
-      .eq('id', paymentId)
+      .select('order_id')
+      .eq('order_id', orderId)
       .maybeSingle()
 
     if (error) {
@@ -32,13 +30,12 @@ async function isPaymentProcessed(paymentId) {
   }
 }
 
-async function markPaymentProcessed(paymentId, paymentType, userId, amount) {
+async function markPaymentProcessed(orderId, paymentType, userId, amount) {
   try {
     const { error } = await supabase
       .from('processed_payments')
       .insert({
-        id: paymentId,
-        payment_type: paymentType,
+        order_id: orderId,
         user_id: String(userId),
         amount: amount !== undefined && amount !== null ? String(amount) : null
       })
@@ -46,7 +43,7 @@ async function markPaymentProcessed(paymentId, paymentType, userId, amount) {
     if (error) {
       // Unique violation means someone else already marked it processed — that's fine.
       if (error.code === '23505') {
-        console.log("⚠️ Payment already marked processed (race detected):", paymentId)
+        console.log("⚠️ Payment already marked processed (race detected):", orderId)
         return
       }
       console.log("❌ Supabase markPaymentProcessed error:", error.message)

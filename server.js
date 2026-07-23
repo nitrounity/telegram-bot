@@ -2,6 +2,9 @@ require('dotenv').config()
 const bot = require('./bot')
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
+const { createClient } = require('@supabase/supabase-js')
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
 
 let isShuttingDown = false
 function setShuttingDown() { isShuttingDown = true }
@@ -23,6 +26,53 @@ async function createCustomerInviteLink() {
   } catch (err) {
     console.log("❌ Failed to create invite link:", err.message)
     return null
+  }
+}
+
+// 🔹 SUPABASE HELPERS
+async function upsertCustomer({ userId, stripeCustomerId, paypalId }) {
+  try {
+    const record = {
+      user_id: String(userId),
+      status: 'active',
+      created_at: new Date().toISOString()
+    }
+
+    if (stripeCustomerId) record.stripe_customer_id = stripeCustomerId
+    if (paypalId) record.paypal_id = paypalId
+
+    const { error } = await supabase
+      .from('customers')
+      .upsert(record, { onConflict: 'user_id' })
+
+    if (error) {
+      console.log("❌ Supabase upsert error:", error.message)
+    } else {
+      console.log("✅ Customer upserted in Supabase:", userId)
+    }
+  } catch (err) {
+    console.log("❌ Supabase upsert exception:", err.message)
+  }
+}
+
+async function markCustomerCancelled(userId, source = 'Stripe') {
+  try {
+    const { error } = await supabase
+      .from('customers')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString()
+      })
+      .eq('user_id', String(userId))
+
+    if (error) {
+      console.log(`❌ Supabase cancellation update error (${source}):`, error.message)
+      return
+    }
+
+    console.log(`✅ Marked user ${userId} ${source === 'PayPal' ? 'PayPal ' : ''}subscription as cancelled`)
+  } catch (err) {
+    console.log(`❌ Supabase cancellation exception (${source}):`, err.message)
   }
 }
 
@@ -77,6 +127,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         return res.sendStatus(200)
       }
 
+      await upsertCustomer({
+        userId,
+        stripeCustomerId: session.customer || paymentId
+      })
+
       await bot.telegram.sendMessage(
         userId,
         `✅ Payment received!\nJoin here:\n${inviteLink}`
@@ -92,6 +147,18 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     } catch (err) {
       console.log("❌ Telegram error:", err.message)
     }
+  }
+
+  if (event.type === 'customer.subscription.deleted') {
+    const subscription = event.data.object
+    const userId = subscription.metadata?.user_id
+
+    if (!userId) {
+      console.log("❌ customer.subscription.deleted missing user_id metadata")
+      return res.sendStatus(200)
+    }
+
+    await markCustomerCancelled(userId, 'Stripe')
   }
 
   res.sendStatus(200)
@@ -132,6 +199,11 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
         return res.sendStatus(200)
       }
 
+      await upsertCustomer({
+        userId,
+        paypalId: paymentId
+      })
+
       await bot.telegram.sendMessage(
         userId,
         `✅ Payment received!\nJoin here:\n${inviteLink}`
@@ -144,6 +216,22 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
 
     } catch (err) {
       console.log("❌ PayPal webhook error:", err.message)
+    }
+  }
+
+  if (event.event_type === 'BILLING.SUBSCRIPTION.CANCELLED') {
+    try {
+      const resource = event.resource
+      const userId = resource?.custom_id
+
+      if (!userId) {
+        console.log("❌ BILLING.SUBSCRIPTION.CANCELLED missing custom_id")
+        return res.sendStatus(200)
+      }
+
+      await markCustomerCancelled(userId, 'PayPal')
+    } catch (err) {
+      console.log("❌ PayPal cancellation webhook error:", err.message)
     }
   }
 
@@ -197,6 +285,11 @@ app.get('/success', async (req, res) => {
       return res.send("Payment received, but could not generate invite link. Please contact support.")
     }
 
+    await upsertCustomer({
+      userId: user_id,
+      paypalId: captureData.id
+    })
+
     await bot.telegram.sendMessage(
       user_id,
       `✅ PayPal payment received!\nJoin here:\n${inviteLink}`
@@ -212,6 +305,69 @@ app.get('/success', async (req, res) => {
   } catch (err) {
     console.log("❌ PayPal fallback error:", err.message)
     res.send("Error processing payment.")
+  }
+})
+
+// 🔹 ADMIN: LIST EXPIRED CANCELLED CUSTOMERS (READ-ONLY)
+app.get('/admin/check-expired', async (req, res) => {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+
+  try {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('user_id, status, cancelled_at')
+      .eq('status', 'cancelled')
+      .lt('cancelled_at', thirtyDaysAgo.toISOString())
+
+    if (error) {
+      console.log("❌ Supabase query error (check-expired):", error.message)
+      return res.status(500).json({ success: false, error: error.message })
+    }
+
+    return res.json({ success: true, count: data.length, customers: data })
+  } catch (err) {
+    console.log("❌ /admin/check-expired error:", err.message)
+    return res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// 🔹 ADMIN: CLEANUP EXPIRED CANCELLED CUSTOMERS
+app.get('/admin/cleanup-expired', async (req, res) => {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+
+  const errors = []
+  let removed = 0
+
+  try {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('user_id')
+      .eq('status', 'cancelled')
+      .lt('cancelled_at', thirtyDaysAgo.toISOString())
+
+    if (error) {
+      console.log("❌ Supabase query error (cleanup-expired):", error.message)
+      return res.status(500).json({ success: false, error: error.message })
+    }
+
+    for (const customer of data) {
+      const userId = customer.user_id
+
+      try {
+        await bot.telegram.banChatMember(process.env.GROUP_ID, userId)
+        removed++
+      } catch (err) {
+        console.log(`❌ Failed to remove user ${userId}:`, err.message)
+        errors.push({ user_id: userId, error: err.message })
+      }
+    }
+
+    console.log(`✅ Cleanup: removed ${removed} expired customers`)
+
+    return res.json({ success: true, removed, errors })
+  } catch (err) {
+    console.log("❌ /admin/cleanup-expired error:", err.message)
+    return res.status(500).json({ success: false, error: err.message })
   }
 })
 

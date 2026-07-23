@@ -20,6 +20,13 @@ const loadingKeyboard = Markup.inlineKeyboard([
 
 bot.action('noop', (ctx) => ctx.answerCbQuery())
 
+// 🔹 GLOBAL ERROR HANDLER — catches any error thrown inside handlers below
+bot.catch((err, ctx) => {
+  console.log("❌ BOT HANDLER ERROR:", err)
+  console.log("   Update type:", ctx.updateType)
+  console.log("   From user:", ctx.from ? ctx.from.id : "unknown")
+})
+
 // 🔹 START
 bot.start(async (ctx) => {
 

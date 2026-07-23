@@ -33,7 +33,13 @@ const WEBHOOK_PATH = '/telegram-webhook'
 app.use(WEBHOOK_PATH, express.json(), (req, res, next) => {
   if (isShuttingDown) return res.sendStatus(503)
   next()
-}, (req, res) => bot.handleUpdate(req.body, res))
+}, (req, res) => {
+  console.log("📩 Incoming Telegram update:", JSON.stringify(req.body))
+  bot.handleUpdate(req.body, res).catch(err => {
+    console.log("❌ handleUpdate error:", err)
+    if (!res.headersSent) res.sendStatus(200)
+  })
+})
 
 // 🔹 STRIPE WEBHOOK
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -232,6 +238,9 @@ async function start() {
   try {
     await bot.telegram.setWebhook(webhookUrl)
     console.log("✅ Telegram webhook set:", webhookUrl)
+
+    const info = await bot.telegram.getWebhookInfo()
+    console.log("ℹ️ Webhook info:", JSON.stringify(info))
   } catch (err) {
     console.error("❌ Failed to set Telegram webhook:", err.message)
     process.exit(1)

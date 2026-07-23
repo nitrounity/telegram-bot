@@ -173,12 +173,22 @@ app.get('/success', async (req, res) => {
     const tokenData = await tokenRes.json()
     const accessToken = tokenData.access_token
 
-    await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders/${token}/capture`, {
+    const captureRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders/${token}/capture`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${accessToken}`
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
       }
     })
+
+    if (!captureRes.ok) {
+      const captureErrorBody = await captureRes.text()
+      console.log("❌ PayPal capture failed:", captureRes.status, captureErrorBody)
+      return res.send("Payment could not be captured. Please contact support.")
+    }
+
+    const captureData = await captureRes.json()
+    console.log("✅ PayPal capture succeeded:", captureData.id, captureData.status)
 
     const inviteLink = await createCustomerInviteLink()
 

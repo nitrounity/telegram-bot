@@ -28,6 +28,11 @@ async function createCustomerInviteLink() {
 
 const app = express()
 
+// 🔹 HEALTHCHECK
+app.get('/health', (req, res) => {
+  res.status(200).json({ ok: true })
+})
+
 // 🔹 TELEGRAM WEBHOOK
 const WEBHOOK_PATH = '/telegram-webhook'
 app.use(WEBHOOK_PATH, express.json(), (req, res, next) => {
@@ -226,6 +231,8 @@ app.get('/success', async (req, res) => {
 let server
 
 async function start() {
+  console.log("🔄 Starting server initialization...")
+
   // Set up Telegram webhook before accepting traffic
   const baseUrl = process.env.BASE_URL
   if (!baseUrl) {
@@ -246,11 +253,22 @@ async function start() {
     process.exit(1)
   }
 
-  server = app.listen(3000, () => {
-    console.log("🚀 Server running on port 3000")
+  const port = process.env.PORT || 3000
+  server = app.listen(port, () => {
+    console.log(`🚀 Server running on port ${port}`)
+    console.log("✅ Healthcheck available at /health")
+    console.log("✅ Server startup complete — ready to accept traffic")
+  })
+
+  server.on('error', (err) => {
+    console.error("❌ Server failed to start:", err.message)
+    process.exit(1)
   })
 }
 
-start()
+start().catch((err) => {
+  console.error("❌ Fatal error during startup:", err)
+  process.exit(1)
+})
 
 module.exports = { get server() { return server }, setShuttingDown }

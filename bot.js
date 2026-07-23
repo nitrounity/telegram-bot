@@ -169,6 +169,11 @@ bot.action('paypal', async (ctx) => {
     const tokenData = await tokenRes.json()
     const accessToken = tokenData.access_token
 
+    if (!accessToken) {
+      console.log("❌ PayPal auth failed:", JSON.stringify(tokenData))
+      return ctx.editMessageText("❌ Failed to create PayPal payment (auth).")
+    }
+
     const orderRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders`, {
       method: "POST",
       headers: {
@@ -192,11 +197,18 @@ bot.action('paypal', async (ctx) => {
     })
 
     if (!orderRes.ok) {
+      const errBody = await orderRes.text()
+      console.log("❌ PayPal order creation failed:", orderRes.status, errBody)
       return ctx.editMessageText("❌ Failed to create PayPal payment.")
     }
 
     const orderData = await orderRes.json()
-    const approveLink = orderData.links.find(l => l.rel === "approve").href
+    const approveLink = orderData.links.find(l => l.rel === "approve")?.href
+
+    if (!approveLink) {
+      console.log("❌ PayPal order response missing approve link:", JSON.stringify(orderData))
+      return ctx.editMessageText("❌ Failed to create PayPal payment.")
+    }
 
     // 🔓 UNLOCK BUTTONS
     return ctx.editMessageText(

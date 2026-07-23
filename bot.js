@@ -197,7 +197,7 @@ bot.action('paypal', async (ctx) => {
           custom_id: String(userId)
         }],
         application_context: {
-          return_url: `${process.env.BASE_URL}/success?user_id=${userId}&token={id}`,
+          return_url: `${process.env.BASE_URL}/success?user_id=${userId}`,
           cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
         }
       })

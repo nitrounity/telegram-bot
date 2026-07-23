@@ -167,7 +167,30 @@ bot.action('paypal', async (ctx) => {
     })
 
     const tokenData = await tokenRes.json()
+
+    if (!tokenRes.ok) {
+      console.log("❌ PayPal token request failed:")
+      console.log("Status:", tokenRes.status, tokenRes.statusText)
+      console.log("Response:", JSON.stringify(tokenData, null, 2))
+      return ctx.editMessageText("❌ Failed to authenticate with PayPal.")
+    }
+
     const accessToken = tokenData.access_token
+
+    const orderParams = {
+      intent: "CAPTURE",
+      purchase_units: [{
+        amount: {
+          currency_code: "USD",
+          value: "39.99"
+        },
+        custom_id: String(userId)
+      }],
+      application_context: {
+        return_url: `${process.env.BASE_URL}/success?user_id=${userId}&token={id}`,
+        cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
+      }
+    }
 
     const orderRes = await fetch(`${process.env.PAYPAL_BASE}/v2/checkout/orders`, {
       method: "POST",
@@ -175,27 +198,28 @@ bot.action('paypal', async (ctx) => {
         "Authorization": `Bearer ${accessToken}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        intent: "CAPTURE",
-        purchase_units: [{
-          amount: {
-            currency_code: "USD",
-            value: "39.99"
-          },
-          custom_id: String(userId)
-        }],
-        application_context: {
-          return_url: `${process.env.BASE_URL}/success?user_id=${userId}&token={id}`,
-          cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
-        }
-      })
+      body: JSON.stringify(orderParams)
     })
 
+    const orderData = await orderRes.json()
+
+    console.log("PayPal order request params:", JSON.stringify({
+      user_id: userId,
+      amount: orderParams.purchase_units[0].amount,
+      return_url: orderParams.application_context.return_url,
+      cancel_url: orderParams.application_context.cancel_url
+    }, null, 2))
+    console.log("PayPal order response status:", orderRes.status, orderRes.statusText)
+    console.log("PayPal order response body:", JSON.stringify(orderData, null, 2))
+
     if (!orderRes.ok) {
-      return ctx.editMessageText("❌ Failed to create PayPal payment.")
+      const errorReason = orderData?.details?.[0]?.description || orderData?.message || "Unknown error"
+      console.log(`❌ PayPal order creation failed:\nStatus: ${orderRes.status}\nError: ${errorReason}`)
+      return ctx.editMessageText(
+        `❌ Failed to create PayPal payment.\nStatus: ${orderRes.status}\nError: ${errorReason}`
+      )
     }
 
-    const orderData = await orderRes.json()
     const approveLink = orderData.links.find(l => l.rel === "approve").href
 
     // 🔓 UNLOCK BUTTONS

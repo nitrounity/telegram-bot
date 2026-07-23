@@ -1,13 +1,54 @@
 require('dotenv').config()
 const { Telegraf, Markup } = require('telegraf')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
+const supabase = require('./lib/supabaseClient')
 const supportUsers = new Set()
 const replyMode = new Map()
 
 const bot = new Telegraf(process.env.BOT_TOKEN)
 global.bot = bot
 
-const seenUsers = new Set()
+// 🔹 NEW USER TRACKING (persisted in Supabase so it survives restarts/redeploys)
+// Returns true only when the user was newly inserted (i.e. genuinely new).
+async function trackNewUser(userId, username, firstName) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle()
+
+    if (error) {
+      console.log("❌ Supabase users select error:", error.message)
+      // DB is unreachable/erroring — skip the notification rather than risk spamming duplicates.
+      return false
+    }
+
+    if (data) {
+      // Already known.
+      return false
+    }
+
+    const { error: insertError } = await supabase
+      .from('users')
+      .insert({ id: userId, username, first_name: firstName })
+
+    if (insertError) {
+      // Unique violation means another request already inserted this user — not new.
+      if (insertError.code === '23505') {
+        console.log("⚠️ User already tracked (race detected):", userId)
+        return false
+      }
+      console.log("❌ Supabase users insert error:", insertError.message)
+      return false
+    }
+
+    return true
+  } catch (err) {
+    console.log("❌ trackNewUser unexpected error:", err.message)
+    return false
+  }
+}
 
 const loadingKeyboard = Markup.inlineKeyboard([
   [
@@ -34,9 +75,9 @@ bot.start(async (ctx) => {
   const username = ctx.from.username || "no_username"
   const name = ctx.from.first_name || "no_name"
 
-  if (!seenUsers.has(userId)) {
+  const isNewUser = await trackNewUser(userId, username, name)
 
-    seenUsers.add(userId)
+  if (isNewUser) {
 
     try {
 

@@ -4,7 +4,7 @@ const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
 const { createClient } = require('@supabase/supabase-js')
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
+let supabase
 
 let isShuttingDown = false
 function setShuttingDown() { isShuttingDown = true }
@@ -390,6 +390,14 @@ async function start() {
     console.log("✅ Telegram webhook set:", webhookUrl)
   } catch (err) {
     console.error("❌ Failed to set Telegram webhook:", err.message)
+    process.exit(1)
+  }
+
+  try {
+    supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
+    console.log("✅ Supabase client initialized")
+  } catch (err) {
+    console.error("❌ Failed to initialize Supabase:", err.message)
     process.exit(1)
   }
 

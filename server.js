@@ -2,11 +2,59 @@ require('dotenv').config()
 const bot = require('./bot')
 const express = require('express')
 const stripe = require('stripe')(process.env.STRIPE_SECRET)
+const { createClient } = require('@supabase/supabase-js')
 
 let isShuttingDown = false
 function setShuttingDown() { isShuttingDown = true }
 
-const processedPayments = new Set()
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
+
+// 🔹 PAYMENT DEDUPLICATION (persisted in Supabase so it survives restarts/redeploys)
+async function isPaymentProcessed(paymentId) {
+  try {
+    const { data, error } = await supabase
+      .from('processed_payments')
+      .select('id')
+      .eq('id', paymentId)
+      .maybeSingle()
+
+    if (error) {
+      console.log("❌ Supabase isPaymentProcessed error:", error.message)
+      // Fail closed-ish: if we can't verify, treat as not processed so we don't
+      // silently drop legitimate payments, but log loudly for visibility.
+      return false
+    }
+
+    return !!data
+  } catch (err) {
+    console.log("❌ isPaymentProcessed unexpected error:", err.message)
+    return false
+  }
+}
+
+async function markPaymentProcessed(paymentId, paymentType, userId, amount) {
+  try {
+    const { error } = await supabase
+      .from('processed_payments')
+      .insert({
+        id: paymentId,
+        payment_type: paymentType,
+        user_id: String(userId),
+        amount: amount !== undefined && amount !== null ? String(amount) : null
+      })
+
+    if (error) {
+      // Unique violation means someone else already marked it processed — that's fine.
+      if (error.code === '23505') {
+        console.log("⚠️ Payment already marked processed (race detected):", paymentId)
+        return
+      }
+      console.log("❌ Supabase markPaymentProcessed error:", error.message)
+    }
+  } catch (err) {
+    console.log("❌ markPaymentProcessed unexpected error:", err.message)
+  }
+}
 
 async function createCustomerInviteLink() {
   if (!process.env.GROUP_ID) {
@@ -66,12 +114,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     const amount = session.amount_total / 100
 
     // 🚫 DUPLICATE CHECK (MUST BE FIRST)
-    if (processedPayments.has(paymentId)) {
+    if (await isPaymentProcessed(paymentId)) {
       console.log("⚠️ Duplicate Stripe ignored:", paymentId)
       return res.sendStatus(200)
     }
-
-    processedPayments.add(paymentId)
 
     if (!userId) return res.sendStatus(200)
 
@@ -92,6 +138,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         process.env.ADMIN_ID,
         `💰 Stripe Payment\nUser: ${userId}\nAmount: ${amount}`
       )
+
+      await markPaymentProcessed(paymentId, 'stripe', userId, amount)
 
       console.log("✅ Stripe complete")
 
@@ -117,12 +165,10 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
       const userId = resource.custom_id
 
       // 🚫 DUPLICATE CHECK
-      if (processedPayments.has(paymentId)) {
+      if (await isPaymentProcessed(paymentId)) {
         console.log("⚠️ Duplicate PayPal event ignored:", paymentId)
         return res.sendStatus(200)
       }
-
-      processedPayments.add(paymentId)
 
       if (!userId) {
         console.log("❌ Missing user_id")
@@ -147,6 +193,8 @@ app.post('/paypal-webhook', express.json(), async (req, res) => {
         process.env.ADMIN_ID,
         `💰 PayPal Payment\nUser: ${userId}`
       )
+
+      await markPaymentProcessed(paymentId, 'paypal_webhook', userId, null)
 
     } catch (err) {
       console.log("❌ PayPal webhook error:", err.message)
@@ -196,6 +244,14 @@ app.get('/success', async (req, res) => {
     const captureData = await captureRes.json()
     console.log("✅ PayPal capture succeeded:", captureData.id, captureData.status)
 
+    const paymentId = captureData.id // 🔑 unique PayPal ID (same id used by the webhook)
+
+    // 🚫 DUPLICATE CHECK (guards against race with /paypal-webhook)
+    if (await isPaymentProcessed(paymentId)) {
+      console.log("⚠️ Duplicate PayPal fallback ignored:", paymentId)
+      return res.send("Payment already processed. Return to Telegram.")
+    }
+
     const inviteLink = await createCustomerInviteLink()
 
     if (!inviteLink) {
@@ -212,6 +268,8 @@ app.get('/success', async (req, res) => {
       process.env.ADMIN_ID,
       `💰 PayPal (fallback)\nUser: ${user_id}`
     )
+
+    await markPaymentProcessed(paymentId, 'paypal_fallback', user_id, null)
 
     res.send("Payment successful! Return to Telegram.")
 
